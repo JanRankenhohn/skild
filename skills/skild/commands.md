@@ -8,7 +8,7 @@ Complete reference for all skild CLI commands.
 
 ### skild install
 
-Install a Skill from various sources. Alias: `skild i`
+Install a Skill from various sources. Alias: `skild i`, `skild add`
 
 ```bash
 skild install <source> [options]
@@ -26,9 +26,10 @@ skild add <source> [options]
 **Options:**
 | Option | Description |
 |--------|-------------|
-| `-t, --target <platform>` | Target platform: claude, codex, copilot, antigravity |
+| `-t, --target <platform>` | Target platform: claude, codex, copilot, antigravity, opencode, cursor, windsurf, agents |
 | `--all` | Install to all platforms |
 | `--recursive` | If source is a multi-skill directory/repo (no root `SKILL.md`), install all discovered skills |
+| `--skill <path-or-name>` | Select a single skill when the source contains multiple skills |
 | `-y, --yes` | Skip confirmation prompts (assume yes) |
 | `--depth <n>` | Max markdown recursion depth (default: 0) |
 | `--scan-depth <n>` | Max directory depth to scan for `SKILL.md` (default: 6) |
@@ -92,7 +93,8 @@ skild uninstall <skill> [options]
 | Option | Description |
 |--------|-------------|
 | `-t, --target <platform>` | Target platform |
-| `-l, --local` | Uninstall from project directory |
+| `-l, --local` | Uninstall from project directory (can combine with --global) |
+| `-g, --global` | Uninstall from global directory (can combine with --local) |
 | `-f, --force` | Uninstall even if metadata is missing |
 | `--with-deps` | Also uninstall Skillset dependencies |
 
@@ -110,7 +112,8 @@ skild update [skill] [options]
 | Option | Description |
 |--------|-------------|
 | `-t, --target <platform>` | Target platform |
-| `-l, --local` | Update project-level installations |
+| `-l, --local` | Update project-level installations (can combine with --global) |
+| `-g, --global` | Update global installations (can combine with --local) |
 | `--json` | Output in JSON format |
 
 ---
@@ -304,6 +307,11 @@ skild config set <key> <value>
 skild config unset <key>
 skild config list
 ```
+
+**Options (get/set/unset/list):**
+| Option | Description |
+|--------|-------------|
+| `--json` | Output in JSON format |
 
 **Keys:**
 - `defaultPlatform`: claude, codex, copilot, antigravity, cursor, opencode, windsurf, agents

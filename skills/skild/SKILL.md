@@ -1,7 +1,7 @@
 ---
 name: skild
 description: Skill package manager for AI Agents — install, manage, and publish Agent Skills.
-version: 0.2.9
+version: 0.2.10
 author: Peiiii
 license: MIT
 tags:
@@ -37,6 +37,10 @@ curl "https://registry.skild.sh/resolve?alias=<alias>"
 **Notes:**
 - Prefer `alias` if present; it provides the shortest install command.
 - Use the returned `install` string directly (quotes may appear when a `#ref` is required).
+- `/discover` supports pagination and filtering:
+  - `cursor=<nextCursor>` for pagination
+  - `sort=updated|new|downloads_7d|downloads_30d|stars|stars_30d`
+  - `skillset=true|false` and `category=<id>` to narrow results
 - If you need to browse linked items only:
   - `https://registry.skild.sh/linked-items?limit=20`
 - CLI `skild search` uses the same unified index.
@@ -69,6 +73,13 @@ skild install @publisher/skill-name
 
 # From local directory
 skild install ./my-skill
+
+# Aliases (npm-style)
+skild add @publisher/skill-name
+skild i @publisher/skill-name
+
+# Pick one Skill when source has multiple SKILL.md
+skild install owner/repo --skill skills/pdf
 ```
 
 ### List Installed Skills
@@ -86,6 +97,7 @@ skild info <skill>       # Show details
 skild update <skill>     # Update to latest
 skild uninstall <skill>  # Remove
 skild validate <path>    # Validate structure
+skild sync [skills...]   # Sync across platforms
 ```
 
 ### Search Registry
@@ -98,16 +110,16 @@ Browse online: [hub.skild.sh](https://hub.skild.sh)
 
 ## Target Platforms
 
-| Platform | Option | Global Path |
-|----------|--------|-------------|
-| Claude | `-t claude` (default) | `~/.claude/skills` |
-| Codex | `-t codex` | `~/.codex/skills` |
-| Copilot | `-t copilot` | `~/.github/skills` |
-| Antigravity | `-t antigravity` | `~/.gemini/antigravity/skills` |
-| OpenCode | `-t opencode` | `~/.config/opencode/skill` |
-| Cursor | `-t cursor` | `~/.cursor/skills` |
-| Windsurf | `-t windsurf` | `~/.windsurf/skills` |
-| Agents | `-t agents` | `~/.agents/skills` |
+| Platform | Option | Global Path | Project Path |
+|----------|--------|-------------|--------------|
+| Claude | `-t claude` (default) | `~/.claude/skills` | `./.claude/skills` |
+| Codex | `-t codex` | `~/.codex/skills` | `./.codex/skills` |
+| Copilot | `-t copilot` | `~/.github/skills` | `./.github/skills` |
+| Antigravity | `-t antigravity` | `~/.gemini/antigravity/skills` | `./.agent/skills` |
+| OpenCode | `-t opencode` | `~/.config/opencode/skill` | `./.opencode/skill` |
+| Cursor | `-t cursor` | `~/.cursor/skills` | `./.cursor/skills` |
+| Windsurf | `-t windsurf` | `~/.windsurf/skills` | `./.windsurf/skills` |
+| Agents | `-t agents` | `~/.agents/skills` | `./.agents/skills` |
 
 ```bash
 # Example: Install to Antigravity
@@ -115,6 +127,17 @@ skild install @publisher/skill -t antigravity
 
 # Project-level installation
 skild install @publisher/skill --local
+```
+
+## Defaults & Scope
+
+```bash
+# Default platform & scope
+skild config set defaultPlatform codex
+skild config set defaultScope project
+
+# Default repo for push
+skild config set push.defaultRepo owner/repo
 ```
 
 ## Skillsets

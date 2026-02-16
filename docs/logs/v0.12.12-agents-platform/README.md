@@ -46,16 +46,32 @@ pnpm typecheck
 
 tmpdir="$(mktemp -d)"
 SKILD_HOME="$tmpdir/home" node /Users/peiwang/Projects/skild/packages/cli/dist/index.js list --target agents --json
+
+curl -fsS https://registry.skild.sh/health
+curl -fsS https://skild.sh | rg -n "AGENTS|Agents"
+curl -fsS -o /dev/null -w "%{http_code}\n" https://hub.skild.sh
 ```
 
 验收点：
 
 - `pnpm build/lint/typecheck` 无报错
 - `skild list --target agents --json` 能正常执行且无报错
+- registry/web/console 线上接口与页面可访问
 
 ## 发布 / 部署
 
-无。
+```bash
+# 远程 migrations
+pnpm -C workers/registry exec wrangler d1 migrations apply skild-registry --remote
+
+# npm packages
+pnpm release:publish
+
+# deploy registry / console / web
+pnpm deploy:registry
+pnpm deploy:console
+pnpm deploy:web
+```
 
 ## 影响范围 / 风险
 

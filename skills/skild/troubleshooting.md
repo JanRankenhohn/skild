@@ -122,6 +122,23 @@ Use `--local` for project-level installation:
 skild install <source> --local
 ```
 
+If you expect a global install but it landed in the project (or vice versa), check scope defaults and override:
+
+```bash
+# Inspect defaults
+skild config list
+
+# Force a scope explicitly
+skild install <source> --local
+# Global installs use default scope (omit --local)
+```
+
+You can also set a default scope:
+
+```bash
+skild config set defaultScope global
+```
+
 ---
 
 ## Debugging
@@ -142,6 +159,20 @@ skild install <source> --json
 
 ```bash
 skild --version
+```
+
+### Reset skild home (config/lock/auth)
+
+If config/auth looks corrupted, you can move the skild home directory:
+
+```bash
+mv ~/.skild ~/.skild.bak
+```
+
+Or override per shell:
+
+```bash
+SKILD_HOME=~/tmp/skild-home skild list
 ```
 
 ---

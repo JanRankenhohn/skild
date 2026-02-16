@@ -1,5 +1,16 @@
 # skild
 
+## 0.13.0
+
+### Minor Changes
+
+- Add agents platform support with .agents/skills paths and syncable platform lists.
+
+### Patch Changes
+
+- Updated dependencies
+  - @skild/core@0.13.0
+
 ## 0.12.0
 
 ### Minor Changes

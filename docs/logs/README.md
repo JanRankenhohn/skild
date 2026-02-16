@@ -14,6 +14,7 @@
 - `docs/logs/v0.12.10-skill-push-doc/README.md`
 - `docs/logs/v0.12.11-default-push-repo/README.md`
 - `docs/logs/v0.12.12-agents-platform/README.md`
+- `docs/logs/v0.12.13-skild-skill-refresh/README.md`
 
 ## 写日志的标准
 
