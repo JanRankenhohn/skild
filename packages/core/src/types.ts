@@ -1,12 +1,25 @@
-export const PLATFORMS = ['claude', 'codex', 'copilot', 'antigravity', 'opencode', 'cursor', 'windsurf', 'agents'] as const;
+export const PLATFORMS = [
+  "claude",
+  "codex",
+  "copilot",
+  "antigravity",
+  "opencode",
+  "cursor",
+  "windsurf",
+  "agents",
+] as const;
 export type Platform = (typeof PLATFORMS)[number];
-export type InstallScope = 'global' | 'project';
+export type InstallScope = "global" | "project";
 
-export const ARTIFACT_TYPES = ['skill', 'prompt-pack'] as const;
+export const ARTIFACT_TYPES = ["skill", "prompt-pack"] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
-export type SourceType = 'local' | 'github-url' | 'degit-shorthand' | 'registry';
-export type DependencySourceType = SourceType | 'inline';
+export type SourceType =
+  | "local"
+  | "github-url"
+  | "degit-shorthand"
+  | "registry";
+export type DependencySourceType = SourceType | "inline";
 
 export interface InstallOptions {
   platform?: Platform;
@@ -52,7 +65,7 @@ export interface PromptPackFrontmatter {
 }
 
 export interface SkillValidationIssue {
-  level: 'error' | 'warning';
+  level: "error" | "warning";
   message: string;
   path?: string;
 }
@@ -96,6 +109,8 @@ export interface InstallRecord {
   dependencies?: string[];
   installedDependencies?: InstalledDependency[];
   dependedBy?: string[];
+  /** For prompt-packs: absolute paths of files deployed to the target directory */
+  installedFiles?: string[];
   skill?: {
     frontmatter?: SkillFrontmatter;
     validation?: SkillValidationResult;
