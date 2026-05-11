@@ -78,6 +78,29 @@ export function getSkillInstallDir(platform: Platform, scope: InstallScope, skil
   return path.join(getSkillsDir(platform, scope), skillName);
 }
 
+/**
+ * Resolves the VS Code user prompts directory for the current OS.
+ * - Windows: %APPDATA%/Code/User/prompts
+ * - macOS:   ~/Library/Application Support/Code/User/prompts
+ * - Linux:   ~/.config/Code/User/prompts
+ */
+export function getVSCodePromptsDir(): string {
+  const override = process.env.SKILD_VSCODE_PROMPTS_DIR?.trim();
+  if (override) return path.resolve(override);
+
+  switch (process.platform) {
+    case 'win32': {
+      const appData = process.env.APPDATA;
+      if (!appData) throw new Error('APPDATA environment variable is not set');
+      return path.join(appData, 'Code', 'User', 'prompts');
+    }
+    case 'darwin':
+      return path.join(getHomeDir(), 'Library', 'Application Support', 'Code', 'User', 'prompts');
+    default:
+      return path.join(process.env.XDG_CONFIG_HOME || path.join(getHomeDir(), '.config'), 'Code', 'User', 'prompts');
+  }
+}
+
 export function getSkillMetadataDir(skillInstallDir: string): string {
   return path.join(skillInstallDir, '.skild');
 }

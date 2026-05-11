@@ -2,6 +2,9 @@ export const PLATFORMS = ['claude', 'codex', 'copilot', 'antigravity', 'opencode
 export type Platform = (typeof PLATFORMS)[number];
 export type InstallScope = 'global' | 'project';
 
+export const ARTIFACT_TYPES = ['skill', 'prompt-pack'] as const;
+export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
+
 export type SourceType = 'local' | 'github-url' | 'degit-shorthand' | 'registry';
 export type DependencySourceType = SourceType | 'inline';
 
@@ -40,6 +43,14 @@ export interface SkillFrontmatter {
   [key: string]: unknown;
 }
 
+export interface PromptPackFrontmatter {
+  name: string;
+  description: string;
+  version?: string;
+  files: string[];
+  [key: string]: unknown;
+}
+
 export interface SkillValidationIssue {
   level: 'error' | 'warning';
   message: string;
@@ -55,6 +66,8 @@ export interface SkillValidationResult {
 export interface InstallRecord {
   schemaVersion: 1;
   name: string;
+  /** Artifact type — 'skill' (default/legacy) or 'prompt-pack'. */
+  artifactType?: ArtifactType;
   /**
    * Optional stable identifier for display and CLI input.
    * Example: "@publisher/skill" (directory name remains filesystem-safe).
@@ -100,6 +113,8 @@ export interface InstalledDependency {
 
 export interface LockEntry {
   name: string;
+  /** Artifact type — 'skill' (default/legacy) or 'prompt-pack'. */
+  artifactType?: ArtifactType;
   platform: Platform;
   scope: InstallScope;
   source: string;

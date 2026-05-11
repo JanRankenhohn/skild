@@ -1,12 +1,14 @@
 export { SkildError } from './errors.js';
-export { PLATFORMS } from './types.js';
+export { PLATFORMS, ARTIFACT_TYPES } from './types.js';
 export type {
   Platform,
   InstallScope,
+  ArtifactType,
   InstallOptions,
   ListOptions,
   UpdateOptions,
   SkillFrontmatter,
+  PromptPackFrontmatter,
   SkillValidationResult,
   SkillValidationIssue,
   InstallRecord,
@@ -24,7 +26,7 @@ export {
   saveRegistryAuth,
   clearRegistryAuth
 } from './storage.js';
-export { getSkillsDir, getSkillInstallDir } from './paths.js';
+export { getSkillsDir, getSkillInstallDir, getVSCodePromptsDir } from './paths.js';
 export { validateSkillDir, readSkillMd, parseSkillFrontmatter } from './skill.js';
 export { initSkill } from './init.js';
 export { fetchWithTimeout } from './http.js';
