@@ -75,6 +75,7 @@ export {
   installRegistrySkill,
   listAllSkills,
   listSkills,
+  listPromptPacks,
   getSkillInfo,
   uninstallSkill,
   updateSkill,

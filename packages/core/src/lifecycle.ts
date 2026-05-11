@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import type {
+  ArtifactType,
   InstallOptions,
   InstallRecord,
   InstalledDependency,
@@ -15,7 +16,7 @@ import type {
 } from './types.js';
 import { classifySource, extractSkillName, resolveLocalPath, toDegitPath } from './source.js';
 import { createTempDir, hashDirectoryContent, isDirEmpty, isDirectory, removeDir, replaceDirAtomic } from './fs.js';
-import { ensureDir, getSkillInstallDir, getSkillsDir } from './paths.js';
+import { ensureDir, getSkillInstallDir, getSkillsDir, getSkildGlobalDir } from './paths.js';
 import { SkildError } from './errors.js';
 import { readInstallRecord, writeInstallRecord, upsertLockEntry, loadOrCreateGlobalConfig, removeLockEntry, loadRegistryAuth } from './storage.js';
 import { parseSkillFrontmatter, readSkillMd, validateSkillDir } from './skill.js';
@@ -29,6 +30,7 @@ import {
   type RegistryResolvedVersion
 } from './registry.js';
 import { materializeSourceToDir } from './materialize.js';
+import { detectArtifactType, getArtifactHandler } from './artifact.js';
 
 export interface InstallInput {
   source: string;
@@ -217,35 +219,45 @@ async function installSkillBase(input: InstallInput, options: InstallOptions = {
   const { platform, scope } = resolvePlatformAndScope(options);
   const source = input.source;
   const sourceType = classifySource(source);
-
-  const skillsDir = getSkillsDir(platform, scope);
-  ensureDir(skillsDir);
-
   const skillName = input.nameOverride || extractSkillName(source);
-  const installDir = getSkillInstallDir(platform, scope, skillName);
 
-  if (fs.existsSync(installDir) && !options.force) {
-    throw new SkildError('ALREADY_INSTALLED', `Skill "${skillName}" is already installed at ${installDir}. Use --force, or uninstall first.`, {
-      skillName,
-      installDir
-    });
-  }
-
-  const tempRoot = createTempDir(skillsDir, skillName);
+  // Materialize source to a temp staging dir first so we can detect artifact type
+  const tempBase = getSkillsDir(platform, scope);
+  ensureDir(tempBase);
+  const tempRoot = createTempDir(tempBase, skillName);
   const stagingDir = path.join(tempRoot, 'staging');
 
   try {
     await materializeSourceToDir({ source, targetDir: stagingDir, materializedDir: input.materializedDir });
-
     assertNonEmptyInstall(stagingDir, source);
+
+    // Detect artifact type from staged content
+    const artifactType = detectArtifactType(stagingDir);
+    const handler = getArtifactHandler(artifactType);
+
+    const installDir = handler.resolveInstallDir(platform, scope, skillName);
+    ensureDir(path.dirname(installDir));
+
+    if (fs.existsSync(installDir) && !options.force) {
+      throw new SkildError('ALREADY_INSTALLED', `"${skillName}" is already installed at ${installDir}. Use --force, or uninstall first.`, {
+        skillName,
+        installDir
+      });
+    }
+
     replaceDirAtomic(stagingDir, installDir);
 
     const contentHash = hashDirectoryContent(installDir);
-    const validation = validateSkillDir(installDir);
+    const validation = handler.validate(installDir);
+    const frontmatter = handler.readFrontmatter(installDir);
+
+    // Deploy files (no-op for skills, copies files for prompt-packs)
+    const installedFiles = handler.deployFiles(installDir);
 
     const record: InstallRecord = {
       schemaVersion: 1,
       name: skillName,
+      artifactType: artifactType === 'skill' ? undefined : artifactType,
       platform,
       scope,
       source,
@@ -254,8 +266,9 @@ async function installSkillBase(input: InstallInput, options: InstallOptions = {
       installDir,
       contentHash,
       hasSkillMd: fs.existsSync(path.join(installDir, 'SKILL.md')),
+      ...(installedFiles.length ? { installedFiles } : {}),
       skill: {
-        frontmatter: validation.frontmatter,
+        frontmatter: frontmatter as SkillFrontmatter | undefined,
         validation
       }
     };
@@ -264,6 +277,7 @@ async function installSkillBase(input: InstallInput, options: InstallOptions = {
 
     const lockEntry: LockEntry = {
       name: record.name,
+      artifactType: record.artifactType,
       platform: record.platform,
       scope: record.scope,
       source: record.source,
@@ -627,13 +641,17 @@ export function listAllSkills(options: { scope?: InstallScope } = {}): ListedSki
 export function getSkillInfo(name: string, options: ListOptions = {}): InstallRecord {
   const { platform, scope } = resolvePlatformAndScope(options);
   const installDir = getSkillInstallDir(platform, scope, name);
-  if (!fs.existsSync(installDir)) {
-    throw new SkildError('SKILL_NOT_FOUND', `Skill "${name}" not found in ${getSkillsDir(platform, scope)}`, { name, platform, scope });
+  // Also check the prompt-packs directory
+  const packsDir = path.join(getSkildGlobalDir(), 'packs', name);
+  const resolvedDir = fs.existsSync(installDir) ? installDir : fs.existsSync(packsDir) ? packsDir : installDir;
+
+  if (!fs.existsSync(resolvedDir)) {
+    throw new SkildError('SKILL_NOT_FOUND', `"${name}" not found in ${getSkillsDir(platform, scope)} or packs directory`, { name, platform, scope });
   }
 
-  const record = readInstallRecord(installDir);
+  const record = readInstallRecord(resolvedDir);
   if (!record) {
-    throw new SkildError('MISSING_METADATA', `Skill "${name}" is missing install metadata (.skild/install.json).`, { name, installDir });
+    throw new SkildError('MISSING_METADATA', `"${name}" is missing install metadata (.skild/install.json).`, { name, installDir: resolvedDir });
   }
   return record;
 }
@@ -641,7 +659,8 @@ export function getSkillInfo(name: string, options: ListOptions = {}): InstallRe
 export function validateSkill(nameOrPath: string, options: { platform?: Platform; scope?: InstallScope } = {}): SkillValidationResult {
   const localPath = resolveLocalPath(nameOrPath);
   const dir = localPath || getSkillInstallDir((options.platform || loadOrCreateGlobalConfig().defaultPlatform) as Platform, (options.scope || loadOrCreateGlobalConfig().defaultScope) as InstallScope, nameOrPath);
-  return validateSkillDir(dir);
+  const artifactType = detectArtifactType(dir);
+  return getArtifactHandler(artifactType).validate(dir);
 }
 
 export function uninstallSkill(
@@ -663,13 +682,17 @@ function uninstallSkillInternal(
   visited.add(key);
 
   const installDir = getSkillInstallDir(platform, scope, name);
-  if (!fs.existsSync(installDir)) {
-    throw new SkildError('SKILL_NOT_FOUND', `Skill "${name}" not found in ${getSkillsDir(platform, scope)}`, { name, platform, scope });
+  // Also check the prompt-packs directory
+  const packsDir = path.join(getSkildGlobalDir(), 'packs', name);
+  const resolvedDir = fs.existsSync(installDir) ? installDir : fs.existsSync(packsDir) ? packsDir : installDir;
+
+  if (!fs.existsSync(resolvedDir)) {
+    throw new SkildError('SKILL_NOT_FOUND', `"${name}" not found in ${getSkillsDir(platform, scope)} or packs directory`, { name, platform, scope });
   }
 
-  const record = readInstallRecord(installDir);
+  const record = readInstallRecord(resolvedDir);
   if (!record && !options.allowMissingMetadata) {
-    throw new SkildError('MISSING_METADATA', `Skill "${name}" is missing install metadata. Use --force to uninstall anyway.`, { name, installDir });
+    throw new SkildError('MISSING_METADATA', `"${name}" is missing install metadata. Use --force to uninstall anyway.`, { name, installDir: resolvedDir });
   }
 
   const dependerName = record?.name || name;
@@ -687,7 +710,13 @@ function uninstallSkillInternal(
     }
   }
 
-  removeDir(installDir);
+  // Remove deployed files for non-skill artifact types (e.g. prompt-pack)
+  if (record?.artifactType && record.artifactType !== 'skill') {
+    const handler = getArtifactHandler(record.artifactType);
+    handler.removeDeployedFiles(resolvedDir, record.installedFiles);
+  }
+
+  removeDir(resolvedDir);
   removeLockEntry(scope, name);
 }
 
@@ -718,4 +747,26 @@ export async function updateSkill(name?: string, options: UpdateOptions = {}): P
     results.push(updated);
   }
   return results;
+}
+
+// ---------------------------------------------------------------------------
+// Prompt-pack listing
+// ---------------------------------------------------------------------------
+
+export function listPromptPacks(): ListedSkill[] {
+  const packsDir = path.join(getSkildGlobalDir(), 'packs');
+  if (!fs.existsSync(packsDir)) return [];
+
+  const entries = fs
+    .readdirSync(packsDir, { withFileTypes: true })
+    .filter(e => e.isDirectory() && !e.name.startsWith('.'));
+
+  return entries
+    .map(e => {
+      const dir = path.join(packsDir, e.name);
+      const hasSkillMd = false;
+      const record = readInstallRecord(dir);
+      return { name: e.name, installDir: dir, hasSkillMd, record };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
