@@ -1,5 +1,7 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import chalk from 'chalk';
-import { canonicalNameToInstallDirName, validateSkill, type Platform } from '@skild/core';
+import { canonicalNameToInstallDirName, validateSkill, detectArtifactType, type Platform } from '@skild/core';
 
 export interface ValidateCommandOptions {
   target?: Platform | string;
@@ -22,12 +24,17 @@ export async function validate(target: string | undefined, options: ValidateComm
   }
 
   if (result.ok) {
-    console.log(chalk.green('✓'), 'Valid skill');
+    let label = 'skill';
+    const resolved = path.resolve(resolvedValue);
+    if (fs.existsSync(resolved)) {
+      label = detectArtifactType(resolved);
+    }
+    console.log(chalk.green('✓'), `Valid ${label}`);
     if (result.frontmatter?.name) console.log(chalk.dim(`  name: ${result.frontmatter.name}`));
     return;
   }
 
-  console.error(chalk.red('✗'), 'Invalid skill');
+  console.error(chalk.red('✗'), 'Validation failed');
   for (const issue of result.issues) {
     const color = issue.level === 'error' ? chalk.red : chalk.yellow;
     console.error(`  - ${color(issue.level)}: ${issue.message}`);

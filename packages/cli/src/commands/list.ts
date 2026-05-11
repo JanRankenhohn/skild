@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { PLATFORMS, listAllSkills, listSkills, type Platform } from '@skild/core';
+import { PLATFORMS, listAllSkills, listSkills, listPromptPacks, type Platform } from '@skild/core';
 import { Table } from '../utils/table-utils.js';
 
 export interface ListCommandOptions {
@@ -194,6 +194,25 @@ function renderTableView(allSkills: ReturnType<typeof listAllSkills>, scope: str
   console.log('');
 }
 
+function renderPromptPacks(): void {
+  const packs = listPromptPacks();
+  if (packs.length === 0) return;
+
+  console.log(chalk.bold(`\n📄 Prompt Packs`) + chalk.dim(` (${packs.length})`));
+  for (const pack of packs) {
+    const name = pack.record?.skill?.frontmatter?.name || pack.name;
+    const desc = pack.record?.skill?.frontmatter?.description;
+    const fileCount = pack.record?.installedFiles?.length;
+    const icon = chalk.green('✓');
+    const meta = [
+      fileCount ? `${fileCount} file${fileCount === 1 ? '' : 's'}` : null,
+      desc || null,
+    ].filter(Boolean).join(' · ');
+    console.log(`  ${icon} ${chalk.cyan(name)}${meta ? chalk.dim(`  ${meta}`) : ''}`);
+  }
+  console.log('');
+}
+
 export async function list(options: ListCommandOptions = {}): Promise<void> {
   const scope = options.local ? 'project' : 'global';
   const verbose = Boolean(options.verbose);
@@ -254,9 +273,11 @@ export async function list(options: ListCommandOptions = {}): Promise<void> {
   const allSkills = listAllSkills({ scope });
 
   if (options.json) {
-    console.log(JSON.stringify(allSkills, null, 2));
+    const packs = listPromptPacks();
+    console.log(JSON.stringify({ skills: allSkills, promptPacks: packs }, null, 2));
     return;
   }
 
   renderTableView(allSkills, scope, { verbose });
+  renderPromptPacks();
 }
