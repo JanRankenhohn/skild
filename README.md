@@ -4,20 +4,21 @@
 
 **Get your agents skilled.**
 
-*The npm for Agent Skills — Discover, install, manage, and publish AI Agent Skills with ease*
+_The npm for Agent Skills — Discover, install, manage, and publish AI Agent Skills with ease_
 
 [![npm version](https://img.shields.io/npm/v/skild.svg)](https://www.npmjs.com/package/skild)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 [Website](https://skild.sh) · [Documentation](./docs/README.md) · [Skild Hub](https://hub.skild.sh)
 
-English | **[简体中文](./README.zh-CN.md)**
+English
 
 </div>
 
 ---
 
 ## 🚀 Quick Start
+
 ```bash
 npm i -g skild
 skild install anthropics/skills
@@ -30,24 +31,24 @@ That's it. Your agent is ready to install and manage skills.
 
 ## 🧭 Command Overview
 
-| Command | Description |
-|---------|-------------|
-| `skild install <source>` | Install a Skill (Git URL / local / registry) |
-| `skild list` | List installed Skills |
-| `skild info <skill>` | Show Skill details |
-| `skild update [skill]` | Update installed Skills |
-| `skild sync [skills...]` | Auto-detect missing installs and sync |
-| `skild uninstall <skill>` | Remove a Skill |
-| `skild init <name>` | Create a new Skill project |
-| `skild validate [path\|skill]` | Validate a Skill folder or installed Skill |
-| `skild push <repo>` | Push a Skill to a Git repository |
-| `skild extract-github-skills <source>` | Extract GitHub Skills into a local catalog |
-| `skild search <query>` | Search the registry |
-| `skild signup` | Create a publisher account |
-| `skild login` | Login to registry |
-| `skild whoami` | Show current identity |
-| `skild logout` | Remove credentials |
-| `skild publish` | Publish a Skill to the registry |
+| Command                                | Description                                  |
+| -------------------------------------- | -------------------------------------------- |
+| `skild install <source>`               | Install a Skill (Git URL / local / registry) |
+| `skild list`                           | List installed Skills                        |
+| `skild info <skill>`                   | Show Skill details                           |
+| `skild update [skill]`                 | Update installed Skills                      |
+| `skild sync [skills...]`               | Auto-detect missing installs and sync        |
+| `skild uninstall <skill>`              | Remove a Skill                               |
+| `skild init <name>`                    | Create a new Skill project                   |
+| `skild validate [path\|skill]`         | Validate a Skill folder or installed Skill   |
+| `skild push <repo>`                    | Push a Skill to a Git repository             |
+| `skild extract-github-skills <source>` | Extract GitHub Skills into a local catalog   |
+| `skild search <query>`                 | Search the registry                          |
+| `skild signup`                         | Create a publisher account                   |
+| `skild login`                          | Login to registry                            |
+| `skild whoami`                         | Show current identity                        |
+| `skild logout`                         | Remove credentials                           |
+| `skild publish`                        | Publish a Skill to the registry              |
 
 Run `skild <command> --help` for full options.
 
@@ -158,8 +159,6 @@ skild validate .           # Validate structure
 
 Ready to share? See **[Publishing Skills](./docs/publishing-skills.md)** for the complete guide.
 
-
-
 ## 📚 Documentation
 
 - **[Quick Start](./docs/getting-started.md)** — Get up and running in 2 minutes
@@ -195,6 +194,6 @@ MIT © [Peiiii](https://github.com/Peiiii)
 
 **🛡️ [skild.sh](https://skild.sh)**
 
-*Get your agents skilled.*
+_Get your agents skilled._
 
 </div>
