@@ -2,6 +2,9 @@ export const PLATFORMS = ['claude', 'codex', 'copilot', 'antigravity', 'opencode
 export type Platform = (typeof PLATFORMS)[number];
 export type InstallScope = 'global' | 'project';
 
+export const ARTIFACT_TYPES = ['skill', 'prompt'] as const;
+export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
+
 export type SourceType = 'local' | 'github-url' | 'degit-shorthand' | 'registry';
 export type DependencySourceType = SourceType | 'inline';
 
@@ -9,6 +12,7 @@ export interface InstallOptions {
   platform?: Platform;
   scope?: InstallScope;
   force?: boolean;
+  artifactType?: ArtifactType;
   /**
    * Registry base URL to use when resolving registry dependencies for non-registry installs (e.g. local skillsets).
    * If omitted, falls back to `SKILD_REGISTRY_URL` env var or the default registry.
@@ -19,12 +23,14 @@ export interface InstallOptions {
 export interface ListOptions {
   platform?: Platform;
   scope?: InstallScope;
+  artifactType?: ArtifactType;
 }
 
 export interface UpdateOptions {
   platform?: Platform;
   scope?: InstallScope;
   force?: boolean;
+  artifactType?: ArtifactType;
 }
 
 export interface ValidateOptions {
@@ -55,6 +61,7 @@ export interface SkillValidationResult {
 export interface InstallRecord {
   schemaVersion: 1;
   name: string;
+  artifactType?: ArtifactType;
   /**
    * Optional stable identifier for display and CLI input.
    * Example: "@publisher/skill" (directory name remains filesystem-safe).
@@ -115,6 +122,28 @@ export interface Lockfile {
   schemaVersion: 1;
   updatedAt: string;
   entries: Record<string, LockEntry>;
+}
+
+export interface PromptFrontmatter {
+  name?: string;
+  description?: string;
+  mode?: string;
+  tools?: string[];
+  [key: string]: unknown;
+}
+
+export interface PromptInstallRecord {
+  schemaVersion: 1;
+  name: string;
+  fileName: string;
+  platform: Platform;
+  scope: InstallScope;
+  source: string;
+  sourceType: SourceType;
+  installedAt: string;
+  updatedAt?: string;
+  contentHash: string;
+  frontmatter?: PromptFrontmatter;
 }
 
 export interface GlobalConfig {

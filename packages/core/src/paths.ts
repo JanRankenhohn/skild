@@ -1,7 +1,7 @@
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
-import type { InstallScope, Platform } from './types.js';
+import type { InstallScope, Platform, ArtifactType } from './types.js';
 
 export function getHomeDir(): string {
   const override = process.env.SKILD_HOME?.trim();
@@ -76,6 +76,50 @@ export function getGlobalLockPath(): string {
 
 export function getSkillInstallDir(platform: Platform, scope: InstallScope, skillName: string): string {
   return path.join(getSkillsDir(platform, scope), skillName);
+}
+
+export function getPromptsDir(platform: Platform, scope: InstallScope): string {
+  const base = scope === 'project' ? getProjectDir() : getHomeDir();
+  switch (platform) {
+    case 'claude':
+      return path.join(base, '.claude', 'commands');
+    case 'codex':
+      return path.join(base, '.codex', 'prompts');
+    case 'copilot':
+      return scope === 'project'
+        ? path.join(getProjectDir(), '.github', 'prompts')
+        : path.join(getHomeDir(), 'AppData', 'Roaming', 'Code', 'User', 'prompts');
+    case 'antigravity':
+      return scope === 'project'
+        ? path.join(getProjectDir(), '.agent', 'prompts')
+        : path.join(getHomeDir(), '.gemini', 'antigravity', 'prompts');
+    case 'opencode':
+      return scope === 'project'
+        ? path.join(getProjectDir(), '.opencode', 'prompts')
+        : path.join(getHomeDir(), '.config', 'opencode', 'prompts');
+    case 'cursor':
+      return path.join(base, '.cursor', 'prompts');
+    case 'windsurf':
+      return path.join(base, '.windsurf', 'prompts');
+    case 'agents':
+      return path.join(base, '.agents', 'prompts');
+  }
+}
+
+export function getPromptInstallPath(platform: Platform, scope: InstallScope, promptFileName: string): string {
+  return path.join(getPromptsDir(platform, scope), promptFileName);
+}
+
+export function getPromptMetadataDir(platform: Platform, scope: InstallScope): string {
+  return path.join(getPromptsDir(platform, scope), '.skild');
+}
+
+export function getPromptInstallRecordPath(platform: Platform, scope: InstallScope, promptName: string): string {
+  return path.join(getPromptMetadataDir(platform, scope), `${promptName}.json`);
+}
+
+export function getArtifactDir(platform: Platform, scope: InstallScope, type: ArtifactType): string {
+  return type === 'prompt' ? getPromptsDir(platform, scope) : getSkillsDir(platform, scope);
 }
 
 export function getSkillMetadataDir(skillInstallDir: string): string {

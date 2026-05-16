@@ -1,8 +1,9 @@
 export { SkildError } from './errors.js';
-export { PLATFORMS } from './types.js';
+export { PLATFORMS, ARTIFACT_TYPES } from './types.js';
 export type {
   Platform,
   InstallScope,
+  ArtifactType,
   InstallOptions,
   ListOptions,
   UpdateOptions,
@@ -14,7 +15,9 @@ export type {
   DependencySourceType,
   Lockfile,
   GlobalConfig,
-  RegistryAuth
+  RegistryAuth,
+  PromptFrontmatter,
+  PromptInstallRecord
 } from './types.js';
 
 export {
@@ -24,8 +27,16 @@ export {
   saveRegistryAuth,
   clearRegistryAuth
 } from './storage.js';
-export { getSkillsDir, getSkillInstallDir } from './paths.js';
-export { validateSkillDir, readSkillMd, parseSkillFrontmatter } from './skill.js';
+export {
+  getSkillsDir,
+  getSkillInstallDir,
+  getPromptsDir,
+  getPromptInstallPath,
+  getPromptMetadataDir,
+  getPromptInstallRecordPath,
+  getArtifactDir
+} from './paths.js';
+export { validateSkillDir, readSkillMd, parseSkillFrontmatter, parseFrontmatter } from './skill.js';
 export { initSkill } from './init.js';
 export { fetchWithTimeout } from './http.js';
 export { assertValidAlias, isValidAlias, normalizeAlias } from './alias.js';
