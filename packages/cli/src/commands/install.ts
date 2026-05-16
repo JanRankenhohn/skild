@@ -1,11 +1,12 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import chalk from 'chalk';
+import fs from "node:fs";
+import path from "node:path";
+import chalk from "chalk";
 import {
   deriveChildSource,
   fetchWithTimeout,
   installRegistrySkill,
   installSkill,
+  installPrompt,
   isValidAlias,
   listSkills,
   loadRegistryAuth,
@@ -14,22 +15,36 @@ import {
   resolveRegistryUrl,
   stripSourceRef,
   SkildError,
+  type ArtifactType,
   type InstallRecord,
   type InstallScope,
   type Platform,
-  PLATFORMS
-} from '@skild/core';
-import { createSpinner, logger } from '../utils/logger.js';
-import { flushInteractiveUiNow, promptSkillsInteractive, promptPlatformsInteractive, promptSkillsTreeInteractive } from '../utils/interactive-select.js';
+  type PromptInstallRecord,
+  PLATFORMS,
+} from "@skild/core";
+import { createSpinner, logger } from "../utils/logger.js";
+import {
+  flushInteractiveUiNow,
+  promptSkillsInteractive,
+  promptPlatformsInteractive,
+  promptSkillsTreeInteractive,
+} from "../utils/interactive-select.js";
 import {
   discoverSkillDirsWithHeuristics,
   parseNonNegativeInt,
   parsePositiveInt,
   readSkillMetadata,
-  type DiscoveredSkillDir
-} from './install-discovery.js';
-import { discoverMarkdownSkillsFromSource, type MarkdownTreeNode } from './markdown-discovery.js';
-import type { DiscoveredSkillInstall } from './install-types.js';
+  type DiscoveredSkillDir,
+} from "./install-discovery.js";
+import {
+  discoverMarkdownSkillsFromSource,
+  type MarkdownTreeNode,
+} from "./markdown-discovery.js";
+import type {
+  DiscoveredSkillInstall,
+  DiscoveredPromptInstall,
+} from "./install-types.js";
+import { discoverPromptFiles } from "./prompt-discovery.js";
 
 // ============================================================================
 // Types
@@ -48,6 +63,7 @@ export interface InstallCommandOptions {
   force?: boolean;
   registry?: string;
   json?: boolean;
+  type?: string;
 }
 
 /** Unified context object for the install pipeline. */
@@ -57,7 +73,7 @@ interface InstallContext {
   options: InstallCommandOptions;
 
   // Config (derived from options)
-  scope: 'global' | 'project';
+  scope: "global" | "project";
   registryUrl: string | undefined;
   jsonOnly: boolean;
   interactive: boolean;
@@ -65,6 +81,7 @@ interface InstallContext {
   markdownDepth: number;
   scanDepth: number;
   maxSkills: number;
+  artifactType: ArtifactType;
 
   // Mutable state
   resolvedSource: string;
@@ -75,6 +92,8 @@ interface InstallContext {
   // Discovery results
   discoveredSkills: DiscoveredSkillInstall[] | null;
   selectedSkills: DiscoveredSkillInstall[] | null;
+  discoveredPrompts: DiscoveredPromptInstall[] | null;
+  selectedPrompts: DiscoveredPromptInstall[] | null;
   isSingleSkill: boolean;
   materializedDir: string | null;
   cleanupMaterialized: (() => void) | null;
@@ -82,6 +101,7 @@ interface InstallContext {
 
   // Execution results
   results: InstallRecord[];
+  promptResults: PromptInstallRecord[];
   errors: Array<{ platform: Platform; error: string; inputSource?: string }>;
   skipped: Array<{ skillName: string; platform: Platform; installDir: string }>;
 
@@ -96,9 +116,9 @@ interface InstallContext {
 function looksLikeAlias(input: string): boolean {
   const s = input.trim();
   if (!s) return false;
-  if (s.startsWith('@')) return false;
-  if (s.includes('/') || s.includes('\\')) return false;
-  if (/^https?:\/\//i.test(s) || s.includes('github.com')) return false;
+  if (s.startsWith("@")) return false;
+  if (s.includes("/") || s.includes("\\")) return false;
+  if (/^https?:\/\//i.test(s) || s.includes("github.com")) return false;
   if (fs.existsSync(path.resolve(s))) return false;
   if (!isValidAlias(s)) return false;
   return true;
@@ -110,7 +130,7 @@ function printJson(value: unknown): void {
 
 function appendCleanup(
   current: (() => void) | null,
-  next: (() => void) | null
+  next: (() => void) | null,
 ): (() => void) | null {
   if (!next) return current;
   if (!current) return next;
@@ -121,7 +141,9 @@ function appendCleanup(
 }
 
 function getInstalledPlatforms(scope: InstallScope): Platform[] {
-  return PLATFORMS.filter(platform => listSkills({ platform, scope }).length > 0);
+  return PLATFORMS.filter(
+    (platform) => listSkills({ platform, scope }).length > 0,
+  );
 }
 
 function getPlatformPromptList(scope: InstallScope): Platform[] {
@@ -131,34 +153,51 @@ function getPlatformPromptList(scope: InstallScope): Platform[] {
 
 function normalizeSkillSelector(input: string): string {
   const trimmed = input.trim();
-  if (!trimmed) return '';
+  if (!trimmed) return "";
 
   const normalized = trimmed
-    .replace(/\\/g, '/')
-    .replace(/^\.\/+/, '')
-    .replace(/^\/+|\/+$/g, '')
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "")
+    .replace(/^\/+|\/+$/g, "")
     .toLowerCase();
 
-  return normalized || '.';
+  return normalized || ".";
 }
 
-function skillMatchesSelector(skill: DiscoveredSkillInstall, selector: string): boolean {
+function skillMatchesSelector(
+  skill: DiscoveredSkillInstall,
+  selector: string,
+): boolean {
   if (!selector) return false;
 
-  const relPath = normalizeSkillSelector(skill.relPath || '.');
-  const relPathNoSkillsPrefix = relPath.startsWith('skills/') ? relPath.slice('skills/'.length) : relPath;
-  const relBase = relPath.split('/').pop() || relPath;
+  const relPath = normalizeSkillSelector(skill.relPath || ".");
+  const relPathNoSkillsPrefix = relPath.startsWith("skills/")
+    ? relPath.slice("skills/".length)
+    : relPath;
+  const relBase = relPath.split("/").pop() || relPath;
 
-  if (selector === relPath || selector === relPathNoSkillsPrefix || selector === relBase) return true;
+  if (
+    selector === relPath ||
+    selector === relPathNoSkillsPrefix ||
+    selector === relBase
+  )
+    return true;
 
   const displayName = skill.displayName?.trim().toLowerCase();
   if (displayName && displayName === selector) return true;
 
-  const suggested = skill.suggestedSource ? normalizeSkillSelector(stripSourceRef(skill.suggestedSource)) : '';
+  const suggested = skill.suggestedSource
+    ? normalizeSkillSelector(stripSourceRef(skill.suggestedSource))
+    : "";
   if (suggested) {
-    const suggestedBase = suggested.split('/').pop() || suggested;
-    const suggestedTail = suggested.split('/').slice(-2).join('/');
-    if (selector === suggested || selector === suggestedBase || selector === suggestedTail) return true;
+    const suggestedBase = suggested.split("/").pop() || suggested;
+    const suggestedTail = suggested.split("/").slice(-2).join("/");
+    if (
+      selector === suggested ||
+      selector === suggestedBase ||
+      selector === suggestedTail
+    )
+      return true;
   }
 
   return false;
@@ -168,9 +207,9 @@ function asDiscoveredSkills(
   discovered: DiscoveredSkillDir[],
   toSuggestedSource: (dir: DiscoveredSkillDir) => string,
   toMaterializedDir?: (dir: DiscoveredSkillDir) => string | undefined,
-  toMetadataDir?: (dir: DiscoveredSkillDir) => string | undefined
+  toMetadataDir?: (dir: DiscoveredSkillDir) => string | undefined,
 ): DiscoveredSkillInstall[] {
-  return discovered.map(d => {
+  return discovered.map((d) => {
     const metadataDir = toMetadataDir ? toMetadataDir(d) : undefined;
     const metadata = metadataDir ? readSkillMetadata(metadataDir) : null;
     return {
@@ -187,13 +226,19 @@ function asDiscoveredSkills(
 // Stage 1: Create Context
 // ============================================================================
 
-function createContext(source: string, options: InstallCommandOptions): InstallContext {
-  const scope = options.local ? 'project' : 'global';
+function createContext(
+  source: string,
+  options: InstallCommandOptions,
+): InstallContext {
+  const scope = options.local ? "project" : "global";
   const auth = loadRegistryAuth();
   const registryUrl = options.registry || auth?.registryUrl;
   const jsonOnly = Boolean(options.json);
   const yes = Boolean(options.yes);
-  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY) && !jsonOnly;
+  const interactive =
+    Boolean(process.stdin.isTTY && process.stdout.isTTY) && !jsonOnly;
+  const artifactType: ArtifactType =
+    options.type === "prompt" ? "prompt" : "skill";
 
   // Determine initial targets
   let targets: Platform[] = [];
@@ -209,7 +254,7 @@ function createContext(source: string, options: InstallCommandOptions): InstallC
     needsPlatformPrompt = true;
     targets = [...PLATFORMS]; // Temporary, will be replaced after prompt
   } else {
-    targets = ['claude'];
+    targets = ["claude"];
   }
 
   return {
@@ -223,17 +268,21 @@ function createContext(source: string, options: InstallCommandOptions): InstallC
     markdownDepth: parseNonNegativeInt(options.depth, 0),
     scanDepth: parseNonNegativeInt(options.scanDepth, 6),
     maxSkills: parsePositiveInt(options.maxSkills, 200),
+    artifactType,
     resolvedSource: source.trim(),
     targets,
     forceOverwrite: Boolean(options.force),
     needsPlatformPrompt,
     discoveredSkills: null,
     selectedSkills: null,
+    discoveredPrompts: null,
+    selectedPrompts: null,
     isSingleSkill: false,
     materializedDir: null,
     cleanupMaterialized: null,
     markdownTree: null,
     results: [],
+    promptResults: [],
     errors: [],
     skipped: [],
     spinner: null,
@@ -247,7 +296,7 @@ function createContext(source: string, options: InstallCommandOptions): InstallC
 async function resolveSource(ctx: InstallContext): Promise<boolean> {
   // Validate conflicting options
   if (ctx.options.all && ctx.options.target) {
-    const message = 'Invalid options: use either --all or --target, not both.';
+    const message = "Invalid options: use either --all or --target, not both.";
     if (ctx.jsonOnly) printJson({ ok: false, error: message });
     else console.error(chalk.red(message));
     process.exitCode = 1;
@@ -257,17 +306,28 @@ async function resolveSource(ctx: InstallContext): Promise<boolean> {
   // Resolve alias if needed
   try {
     if (looksLikeAlias(ctx.resolvedSource)) {
-      if (ctx.spinner) ctx.spinner.text = `Resolving ${chalk.cyan(ctx.resolvedSource)}...`;
+      if (ctx.spinner)
+        ctx.spinner.text = `Resolving ${chalk.cyan(ctx.resolvedSource)}...`;
       const registryUrl = resolveRegistryUrl(ctx.registryUrl);
-      const resolved = await resolveRegistryAlias(registryUrl, ctx.resolvedSource);
+      const resolved = await resolveRegistryAlias(
+        registryUrl,
+        ctx.resolvedSource,
+      );
       if (!ctx.jsonOnly) {
         const displaySpec = stripSourceRef(resolved.spec);
-        logger.info(`Resolved ${chalk.cyan(ctx.resolvedSource)} → ${chalk.cyan(displaySpec)} (${resolved.type})`);
+        logger.info(
+          `Resolved ${chalk.cyan(ctx.resolvedSource)} → ${chalk.cyan(displaySpec)} (${resolved.type})`,
+        );
       }
       ctx.resolvedSource = resolved.spec;
     }
   } catch (error: unknown) {
-    const message = error instanceof SkildError ? error.message : error instanceof Error ? error.message : String(error);
+    const message =
+      error instanceof SkildError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : String(error);
     if (ctx.jsonOnly) printJson({ ok: false, error: message });
     else console.error(chalk.red(message));
     process.exitCode = 1;
@@ -282,6 +342,11 @@ async function resolveSource(ctx: InstallContext): Promise<boolean> {
 // ============================================================================
 
 async function discoverSkills(ctx: InstallContext): Promise<boolean> {
+  // Prompt artifact type: use dedicated prompt discovery
+  if (ctx.artifactType === "prompt") {
+    return discoverPrompts(ctx);
+  }
+
   const { resolvedSource, markdownDepth, scanDepth, maxSkills, jsonOnly } = ctx;
 
   // Update spinner text
@@ -291,9 +356,11 @@ async function discoverSkills(ctx: InstallContext): Promise<boolean> {
 
   try {
     // Case 1: Registry skill (@scope/name)
-    if (resolvedSource.startsWith('@') && resolvedSource.includes('/')) {
+    if (resolvedSource.startsWith("@") && resolvedSource.includes("/")) {
       ctx.isSingleSkill = true;
-      ctx.selectedSkills = [{ relPath: resolvedSource, suggestedSource: resolvedSource }];
+      ctx.selectedSkills = [
+        { relPath: resolvedSource, suggestedSource: resolvedSource },
+      ];
       return true;
     }
 
@@ -302,25 +369,36 @@ async function discoverSkills(ctx: InstallContext): Promise<boolean> {
     const isLocal = fs.existsSync(maybeLocalRoot);
 
     if (isLocal) {
-      const hasSkillMd = fs.existsSync(path.join(maybeLocalRoot, 'SKILL.md'));
+      const hasSkillMd = fs.existsSync(path.join(maybeLocalRoot, "SKILL.md"));
       if (hasSkillMd) {
         const metadata = readSkillMetadata(maybeLocalRoot);
         ctx.isSingleSkill = true;
-        ctx.selectedSkills = [{
-          relPath: maybeLocalRoot,
-          suggestedSource: resolvedSource,
-          displayName: metadata?.name,
-          description: metadata?.description,
-        }];
+        ctx.selectedSkills = [
+          {
+            relPath: maybeLocalRoot,
+            suggestedSource: resolvedSource,
+            displayName: metadata?.name,
+            description: metadata?.description,
+          },
+        ];
         return true;
       }
 
       // Discover skills in directory
-      const discovered = discoverSkillDirsWithHeuristics(maybeLocalRoot, { maxDepth: scanDepth, maxSkills });
+      const discovered = discoverSkillDirsWithHeuristics(maybeLocalRoot, {
+        maxDepth: scanDepth,
+        maxSkills,
+      });
       if (discovered.length === 0) {
         const message = `No SKILL.md found at ${maybeLocalRoot} (or within subdirectories).`;
         if (jsonOnly) {
-          printJson({ ok: false, error: 'SKILL_MD_NOT_FOUND', message, source: ctx.source, resolvedSource });
+          printJson({
+            ok: false,
+            error: "SKILL_MD_NOT_FOUND",
+            message,
+            source: ctx.source,
+            resolvedSource,
+          });
         } else {
           if (ctx.spinner) ctx.spinner.stop();
           console.error(chalk.red(message));
@@ -331,9 +409,9 @@ async function discoverSkills(ctx: InstallContext): Promise<boolean> {
 
       ctx.discoveredSkills = asDiscoveredSkills(
         discovered,
-        d => path.join(maybeLocalRoot, d.relPath),
+        (d) => path.join(maybeLocalRoot, d.relPath),
         undefined,
-        d => d.absDir
+        (d) => d.absDir,
       );
       return true;
     }
@@ -343,29 +421,39 @@ async function discoverSkills(ctx: InstallContext): Promise<boolean> {
     try {
       const materialized = await materializeSourceToTemp(resolvedSource);
       ctx.materializedDir = materialized.dir;
-      ctx.cleanupMaterialized = appendCleanup(ctx.cleanupMaterialized, materialized.cleanup);
+      ctx.cleanupMaterialized = appendCleanup(
+        ctx.cleanupMaterialized,
+        materialized.cleanup,
+      );
 
-      const hasSkillMd = fs.existsSync(path.join(ctx.materializedDir, 'SKILL.md'));
+      const hasSkillMd = fs.existsSync(
+        path.join(ctx.materializedDir, "SKILL.md"),
+      );
       if (hasSkillMd) {
         const metadata = readSkillMetadata(ctx.materializedDir);
         ctx.isSingleSkill = true;
-        ctx.selectedSkills = [{
-          relPath: '.',
-          suggestedSource: resolvedSource,
-          materializedDir: ctx.materializedDir,
-          displayName: metadata?.name,
-          description: metadata?.description,
-        }];
+        ctx.selectedSkills = [
+          {
+            relPath: ".",
+            suggestedSource: resolvedSource,
+            materializedDir: ctx.materializedDir,
+            displayName: metadata?.name,
+            description: metadata?.description,
+          },
+        ];
         return true;
       }
 
-      const discovered = discoverSkillDirsWithHeuristics(ctx.materializedDir, { maxDepth: scanDepth, maxSkills });
+      const discovered = discoverSkillDirsWithHeuristics(ctx.materializedDir, {
+        maxDepth: scanDepth,
+        maxSkills,
+      });
       if (discovered.length > 0) {
         ctx.discoveredSkills = asDiscoveredSkills(
           discovered,
-          d => deriveChildSource(resolvedSource, d.relPath),
-          d => d.absDir,
-          d => d.absDir
+          (d) => deriveChildSource(resolvedSource, d.relPath),
+          (d) => d.absDir,
+          (d) => d.absDir,
         );
         return true;
       }
@@ -379,10 +467,10 @@ async function discoverSkills(ctx: InstallContext): Promise<boolean> {
       maxDocDepth: markdownDepth,
       maxSkillDepth: scanDepth,
       maxSkills,
-      onProgress: update => {
+      onProgress: (update) => {
         if (ctx.spinner) {
-          const current = update.current ? ` · ${update.current}` : '';
-          const capped = update.linkLimitReached ? ' · link cap reached' : '';
+          const current = update.current ? ` · ${update.current}` : "";
+          const capped = update.linkLimitReached ? " · link cap reached" : "";
           ctx.spinner.text = `Parsing markdown (${update.docsScanned} docs, ${update.linksChecked} links, ${update.skillsFound} skills)${current}${capped}`;
         }
       },
@@ -391,23 +479,144 @@ async function discoverSkills(ctx: InstallContext): Promise<boolean> {
       ctx.discoveredSkills = markdownResult.skills;
       ctx.markdownTree = markdownResult.tree;
       ctx.isSingleSkill = markdownResult.skills.length === 1;
-      ctx.selectedSkills = ctx.isSingleSkill ? [markdownResult.skills[0]!] : null;
-      ctx.cleanupMaterialized = appendCleanup(ctx.cleanupMaterialized, markdownResult.cleanup);
+      ctx.selectedSkills = ctx.isSingleSkill
+        ? [markdownResult.skills[0]!]
+        : null;
+      ctx.cleanupMaterialized = appendCleanup(
+        ctx.cleanupMaterialized,
+        markdownResult.cleanup,
+      );
       return true;
     }
 
-    const message = `No SKILL.md found in source "${resolvedSource}".` + (materializeError ? ' (materialize failed, markdown fallback empty)' : '');
+    const message =
+      `No SKILL.md found in source "${resolvedSource}".` +
+      (materializeError
+        ? " (materialize failed, markdown fallback empty)"
+        : "");
     if (jsonOnly) {
-      printJson({ ok: false, error: 'SKILL_MD_NOT_FOUND', message, source: ctx.source, resolvedSource });
+      printJson({
+        ok: false,
+        error: "SKILL_MD_NOT_FOUND",
+        message,
+        source: ctx.source,
+        resolvedSource,
+      });
     } else {
       if (ctx.spinner) ctx.spinner.stop();
       console.error(chalk.red(message));
     }
     process.exitCode = 1;
     return false;
-
   } catch (error: unknown) {
-    const message = error instanceof SkildError ? error.message : error instanceof Error ? error.message : String(error);
+    const message =
+      error instanceof SkildError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    if (jsonOnly) printJson({ ok: false, error: message });
+    else {
+      if (ctx.spinner) ctx.spinner.stop();
+      console.error(chalk.red(message));
+    }
+    process.exitCode = 1;
+    return false;
+  }
+}
+
+// ============================================================================
+// Stage 3b: Discover Prompts (--type prompt)
+// ============================================================================
+
+async function discoverPrompts(ctx: InstallContext): Promise<boolean> {
+  const { resolvedSource, maxSkills, jsonOnly } = ctx;
+
+  if (ctx.spinner) {
+    ctx.spinner.text = `Discovering prompts at ${chalk.cyan(ctx.source)}...`;
+  }
+
+  try {
+    const maybeLocalRoot = path.resolve(resolvedSource);
+    if (!fs.existsSync(maybeLocalRoot)) {
+      const message = `Prompt source not found: ${resolvedSource}. Prompt install currently supports local paths only.`;
+      if (jsonOnly) printJson({ ok: false, error: message });
+      else {
+        if (ctx.spinner) ctx.spinner.stop();
+        console.error(chalk.red(message));
+      }
+      process.exitCode = 1;
+      return false;
+    }
+
+    // Single file
+    const stat = fs.statSync(maybeLocalRoot);
+    if (stat.isFile() && maybeLocalRoot.endsWith(".prompt.md")) {
+      const fileName = path.basename(maybeLocalRoot);
+      ctx.discoveredPrompts = [
+        {
+          relPath: fileName,
+          fileName,
+          absPath: maybeLocalRoot,
+          suggestedSource: resolvedSource,
+          displayName: fileName,
+        },
+      ];
+      ctx.selectedPrompts = ctx.discoveredPrompts;
+      ctx.isSingleSkill = true;
+      return true;
+    }
+
+    // Directory scan
+    if (!stat.isDirectory()) {
+      const message = `Source "${resolvedSource}" is not a directory or .prompt.md file.`;
+      if (jsonOnly) printJson({ ok: false, error: message });
+      else {
+        if (ctx.spinner) ctx.spinner.stop();
+        console.error(chalk.red(message));
+      }
+      process.exitCode = 1;
+      return false;
+    }
+
+    const discovered = discoverPromptFiles(maybeLocalRoot, {
+      maxFiles: maxSkills,
+    });
+    if (discovered.length === 0) {
+      const message = `No .prompt.md files found in ${maybeLocalRoot}.`;
+      if (jsonOnly)
+        printJson({
+          ok: false,
+          error: "PROMPT_NOT_FOUND",
+          message,
+          source: ctx.source,
+        });
+      else {
+        if (ctx.spinner) ctx.spinner.stop();
+        console.error(chalk.red(message));
+      }
+      process.exitCode = 1;
+      return false;
+    }
+
+    ctx.discoveredPrompts = discovered.map((d) => ({
+      relPath: d.relPath,
+      fileName: d.fileName,
+      absPath: d.absPath,
+      suggestedSource: resolvedSource,
+      displayName: d.metadata?.name || d.fileName,
+      description: d.metadata?.description,
+    }));
+    ctx.selectedPrompts = ctx.discoveredPrompts;
+    ctx.isSingleSkill = discovered.length === 1;
+    return true;
+  } catch (error: unknown) {
+    const message =
+      error instanceof SkildError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : String(error);
     if (jsonOnly) printJson({ ok: false, error: message });
     else {
       if (ctx.spinner) ctx.spinner.stop();
@@ -423,31 +632,83 @@ async function discoverSkills(ctx: InstallContext): Promise<boolean> {
 // ============================================================================
 
 async function promptSelections(ctx: InstallContext): Promise<boolean> {
+  // For prompts, skip skill selection — all discovered prompts are selected
+  if (ctx.artifactType === "prompt") {
+    if (!ctx.selectedPrompts || ctx.selectedPrompts.length === 0) return false;
+    if (ctx.needsPlatformPrompt) {
+      if (ctx.spinner) ctx.spinner.stop();
+      const installedPlatforms = getInstalledPlatforms(ctx.scope);
+      const selectedPlatforms = await promptPlatformsInteractive({
+        defaultAll: installedPlatforms.length === 0,
+        platforms: getPlatformPromptList(ctx.scope),
+        installedPlatforms,
+      });
+      if (!selectedPlatforms) {
+        console.log(chalk.red("No platforms selected."));
+        process.exitCode = 1;
+        return false;
+      }
+      ctx.targets = selectedPlatforms;
+      ctx.needsPlatformPrompt = false;
+      flushInteractiveUiNow();
+      if (ctx.spinner) ctx.spinner.start();
+    }
+    return true;
+  }
+
   const { jsonOnly, interactive, yes, options } = ctx;
-  const skillSelector = typeof options.skill === 'string' ? normalizeSkillSelector(options.skill) : '';
+  const skillSelector =
+    typeof options.skill === "string"
+      ? normalizeSkillSelector(options.skill)
+      : "";
 
   if (!ctx.isSingleSkill && skillSelector) {
     if (!ctx.discoveredSkills || ctx.discoveredSkills.length === 0) {
-      const message = 'No skills discovered to match --skill.';
-      if (jsonOnly) printJson({ ok: false, error: 'SKILL_NOT_FOUND', message, source: ctx.source, resolvedSource: ctx.resolvedSource });
+      const message = "No skills discovered to match --skill.";
+      if (jsonOnly)
+        printJson({
+          ok: false,
+          error: "SKILL_NOT_FOUND",
+          message,
+          source: ctx.source,
+          resolvedSource: ctx.resolvedSource,
+        });
       else console.error(chalk.red(message));
       process.exitCode = 1;
       return false;
     }
 
-    const matches = ctx.discoveredSkills.filter(s => skillMatchesSelector(s, skillSelector));
+    const matches = ctx.discoveredSkills.filter((s) =>
+      skillMatchesSelector(s, skillSelector),
+    );
     if (matches.length === 0) {
-      const available = ctx.discoveredSkills.slice(0, 10).map(s => s.relPath);
-      const message = `Skill "${options.skill}" not found in source. Available: ${available.join(', ')}`;
-      if (jsonOnly) printJson({ ok: false, error: 'SKILL_NOT_FOUND', message, source: ctx.source, resolvedSource: ctx.resolvedSource, available });
+      const available = ctx.discoveredSkills.slice(0, 10).map((s) => s.relPath);
+      const message = `Skill "${options.skill}" not found in source. Available: ${available.join(", ")}`;
+      if (jsonOnly)
+        printJson({
+          ok: false,
+          error: "SKILL_NOT_FOUND",
+          message,
+          source: ctx.source,
+          resolvedSource: ctx.resolvedSource,
+          available,
+        });
       else console.error(chalk.red(message));
       process.exitCode = 1;
       return false;
     }
     if (matches.length > 1) {
-      const matched = matches.map(s => s.relPath).join(', ');
+      const matched = matches.map((s) => s.relPath).join(", ");
       const message = `Skill selector "${options.skill}" is ambiguous. Matches: ${matched}. Please use a more specific path.`;
-      if (jsonOnly) printJson({ ok: false, error: 'SKILL_AMBIGUOUS', message, source: ctx.source, resolvedSource: ctx.resolvedSource, matches: matches.map(s => s.relPath) });
+      if (jsonOnly)
+        printJson({
+          ok: false,
+          error: "SKILL_AMBIGUOUS",
+          message,
+          source: ctx.source,
+          resolvedSource: ctx.resolvedSource,
+          matches: matches.map((s) => s.relPath),
+        });
       else console.error(chalk.red(message));
       process.exitCode = 1;
       return false;
@@ -468,7 +729,7 @@ async function promptSelections(ctx: InstallContext): Promise<boolean> {
         installedPlatforms,
       });
       if (!selectedPlatforms) {
-        console.log(chalk.red('No platforms selected.'));
+        console.log(chalk.red("No platforms selected."));
         process.exitCode = 1;
         return false;
       }
@@ -488,7 +749,15 @@ async function promptSelections(ctx: InstallContext): Promise<boolean> {
   // Check max skills limit
   if (ctx.discoveredSkills.length > ctx.maxSkills) {
     const message = `Found more than ${ctx.maxSkills} skills. Increase --max-skills to proceed.`;
-    if (jsonOnly) printJson({ ok: false, error: 'TOO_MANY_SKILLS', message, source: ctx.source, resolvedSource: ctx.resolvedSource, maxSkills: ctx.maxSkills });
+    if (jsonOnly)
+      printJson({
+        ok: false,
+        error: "TOO_MANY_SKILLS",
+        message,
+        source: ctx.source,
+        resolvedSource: ctx.resolvedSource,
+        maxSkills: ctx.maxSkills,
+      });
     else console.error(chalk.red(message));
     process.exitCode = 1;
     return false;
@@ -497,11 +766,14 @@ async function promptSelections(ctx: InstallContext): Promise<boolean> {
   // Non-interactive mode without --recursive
   if (!options.recursive && !yes) {
     if (jsonOnly) {
-      const foundOutput = ctx.discoveredSkills.map(({ relPath, suggestedSource }) => ({ relPath, suggestedSource }));
+      const foundOutput = ctx.discoveredSkills.map(
+        ({ relPath, suggestedSource }) => ({ relPath, suggestedSource }),
+      );
       printJson({
         ok: false,
-        error: 'MULTI_SKILL_SOURCE',
-        message: 'Source is not a skill root (missing SKILL.md). Multiple skills were found.',
+        error: "MULTI_SKILL_SOURCE",
+        message:
+          "Source is not a skill root (missing SKILL.md). Multiple skills were found.",
         source: ctx.source,
         resolvedSource: ctx.resolvedSource,
         found: foundOutput,
@@ -512,13 +784,18 @@ async function promptSelections(ctx: InstallContext): Promise<boolean> {
 
     if (ctx.spinner) ctx.spinner.stop();
 
-    const headline = ctx.discoveredSkills.length === 1
-      ? `No SKILL.md found at root. Found 1 skill.\n`
-      : `No SKILL.md found at root. Found ${ctx.discoveredSkills.length} skills.\n`;
+    const headline =
+      ctx.discoveredSkills.length === 1
+        ? `No SKILL.md found at root. Found 1 skill.\n`
+        : `No SKILL.md found at root. Found ${ctx.discoveredSkills.length} skills.\n`;
     console.log(chalk.yellow(headline));
 
     if (!interactive) {
-      console.log(chalk.dim(`Tip: rerun with ${chalk.cyan('skild install <source> --recursive')} to install all.`));
+      console.log(
+        chalk.dim(
+          `Tip: rerun with ${chalk.cyan("skild install <source> --recursive")} to install all.`,
+        ),
+      );
       process.exitCode = 1;
       return false;
     }
@@ -530,18 +807,25 @@ async function promptSelections(ctx: InstallContext): Promise<boolean> {
 
     // Don't show headline again if we just showed it above
     if (options.recursive) {
-      const headline = ctx.discoveredSkills.length === 1
-        ? `No SKILL.md found at root. Found 1 skill.\n`
-        : `No SKILL.md found at root. Found ${ctx.discoveredSkills.length} skills.\n`;
+      const headline =
+        ctx.discoveredSkills.length === 1
+          ? `No SKILL.md found at root. Found 1 skill.\n`
+          : `No SKILL.md found at root. Found ${ctx.discoveredSkills.length} skills.\n`;
       console.log(chalk.yellow(headline));
     }
 
     // Step 1: Select skills
     const selected = ctx.markdownTree
-      ? await promptSkillsTreeInteractive(ctx.discoveredSkills, ctx.markdownTree, { defaultAll: true })
-      : await promptSkillsInteractive(ctx.discoveredSkills, { defaultAll: true });
+      ? await promptSkillsTreeInteractive(
+          ctx.discoveredSkills,
+          ctx.markdownTree,
+          { defaultAll: true },
+        )
+      : await promptSkillsInteractive(ctx.discoveredSkills, {
+          defaultAll: true,
+        });
     if (!selected) {
-      console.log(chalk.red('No skills selected.'));
+      console.log(chalk.red("No skills selected."));
       process.exitCode = 1;
       return false;
     }
@@ -556,7 +840,7 @@ async function promptSelections(ctx: InstallContext): Promise<boolean> {
         installedPlatforms,
       });
       if (!selectedPlatforms) {
-        console.log(chalk.red('No platforms selected.'));
+        console.log(chalk.red("No platforms selected."));
         process.exitCode = 1;
         return false;
       }
@@ -579,7 +863,19 @@ async function promptSelections(ctx: InstallContext): Promise<boolean> {
 // ============================================================================
 
 async function executeInstalls(ctx: InstallContext): Promise<void> {
-  const { selectedSkills, targets, scope, forceOverwrite, registryUrl, spinner } = ctx;
+  // Branch for prompts
+  if (ctx.artifactType === "prompt") {
+    return executePromptInstalls(ctx);
+  }
+
+  const {
+    selectedSkills,
+    targets,
+    scope,
+    forceOverwrite,
+    registryUrl,
+    spinner,
+  } = ctx;
 
   if (!selectedSkills || selectedSkills.length === 0) {
     return;
@@ -591,7 +887,7 @@ async function executeInstalls(ctx: InstallContext): Promise<void> {
 
   for (const skill of selectedSkills) {
     currentIdx += 1;
-    const skillName = skill.relPath === '.' ? ctx.source : skill.relPath;
+    const skillName = skill.relPath === "." ? ctx.source : skill.relPath;
 
     if (spinner) {
       spinner.text = isMulti
@@ -601,31 +897,107 @@ async function executeInstalls(ctx: InstallContext): Promise<void> {
 
     for (const platform of targets) {
       try {
-        const record = skill.suggestedSource.startsWith('@') && skill.suggestedSource.includes('/')
-          ? await installRegistrySkill(
-            { spec: skill.suggestedSource, registryUrl },
-            { platform, scope, force: forceOverwrite }
-          )
-          : await installSkill(
-            { source: skill.suggestedSource, materializedDir: skill.materializedDir },
-            { platform, scope, force: forceOverwrite, registryUrl }
-          );
+        const record =
+          skill.suggestedSource.startsWith("@") &&
+          skill.suggestedSource.includes("/")
+            ? await installRegistrySkill(
+                { spec: skill.suggestedSource, registryUrl },
+                { platform, scope, force: forceOverwrite },
+              )
+            : await installSkill(
+                {
+                  source: skill.suggestedSource,
+                  materializedDir: skill.materializedDir,
+                },
+                { platform, scope, force: forceOverwrite, registryUrl },
+              );
 
         ctx.results.push(record);
         void reportDownload(record, registryUrl);
       } catch (error: unknown) {
         // Handle already-installed by skipping
-        if (error instanceof SkildError && error.code === 'ALREADY_INSTALLED') {
-          const details = error.details as { skillName?: string; installDir?: string } | undefined;
+        if (error instanceof SkildError && error.code === "ALREADY_INSTALLED") {
+          const details = error.details as
+            | { skillName?: string; installDir?: string }
+            | undefined;
           ctx.skipped.push({
             skillName: details?.skillName || skill.suggestedSource,
             platform,
-            installDir: details?.installDir || '',
+            installDir: details?.installDir || "",
           });
           continue;
         }
-        const message = error instanceof SkildError ? error.message : error instanceof Error ? error.message : String(error);
-        ctx.errors.push({ platform, error: message, inputSource: skill.suggestedSource });
+        const message =
+          error instanceof SkildError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : String(error);
+        ctx.errors.push({
+          platform,
+          error: message,
+          inputSource: skill.suggestedSource,
+        });
+      }
+    }
+  }
+}
+
+// ============================================================================
+// Stage 5b: Execute Prompt Installs
+// ============================================================================
+
+async function executePromptInstalls(ctx: InstallContext): Promise<void> {
+  const { selectedPrompts, targets, scope, forceOverwrite, spinner } = ctx;
+  if (!selectedPrompts || selectedPrompts.length === 0) return;
+
+  const totalPrompts = selectedPrompts.length;
+  const isMulti = totalPrompts > 1;
+  let currentIdx = 0;
+
+  for (const prompt of selectedPrompts) {
+    currentIdx += 1;
+    if (spinner) {
+      spinner.text = isMulti
+        ? `Installing prompt ${chalk.cyan(prompt.displayName || prompt.fileName)} ${chalk.dim(`(${currentIdx}/${totalPrompts})`)}...`
+        : `Installing prompt ${chalk.cyan(prompt.displayName || prompt.fileName)}...`;
+    }
+
+    for (const platform of targets) {
+      try {
+        const record = installPrompt(
+          {
+            absPath: prompt.absPath,
+            fileName: prompt.fileName,
+            source: prompt.suggestedSource,
+            frontmatter: undefined,
+          },
+          { platform, scope, force: forceOverwrite },
+        );
+        ctx.promptResults.push(record);
+      } catch (error: unknown) {
+        if (error instanceof SkildError && error.code === "ALREADY_INSTALLED") {
+          const details = error.details as
+            | { skillName?: string; installDir?: string }
+            | undefined;
+          ctx.skipped.push({
+            skillName: details?.skillName || prompt.fileName,
+            platform,
+            installDir: details?.installDir || "",
+          });
+          continue;
+        }
+        const message =
+          error instanceof SkildError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : String(error);
+        ctx.errors.push({
+          platform,
+          error: message,
+          inputSource: prompt.fileName,
+        });
       }
     }
   }
@@ -636,7 +1008,20 @@ async function executeInstalls(ctx: InstallContext): Promise<void> {
 // ============================================================================
 
 function reportResults(ctx: InstallContext): void {
-  const { results, errors, skipped, spinner, jsonOnly, selectedSkills, targets } = ctx;
+  // Branch for prompts
+  if (ctx.artifactType === "prompt") {
+    return reportPromptResults(ctx);
+  }
+
+  const {
+    results,
+    errors,
+    skipped,
+    spinner,
+    jsonOnly,
+    selectedSkills,
+    targets,
+  } = ctx;
 
   // Cleanup materialized directory
   if (ctx.cleanupMaterialized) {
@@ -648,7 +1033,8 @@ function reportResults(ctx: InstallContext): void {
   // JSON output mode
   if (jsonOnly) {
     if (!isMultiSkill && targets.length === 1) {
-      if (errors.length) printJson({ ok: false, error: errors[0]?.error || 'Install failed.' });
+      if (errors.length)
+        printJson({ ok: false, error: errors[0]?.error || "Install failed." });
       else printJson(results[0] ?? null);
     } else {
       printJson({
@@ -668,33 +1054,35 @@ function reportResults(ctx: InstallContext): void {
     return;
   }
 
-  const platformsLabel = targets.length === PLATFORMS.length
-    ? 'all platforms'
-    : targets.length === 1
-      ? targets[0]
-      : `${targets.length} platforms`;
+  const platformsLabel =
+    targets.length === PLATFORMS.length
+      ? "all platforms"
+      : targets.length === 1
+        ? targets[0]
+        : `${targets.length} platforms`;
   const isMultiTarget = targets.length > 1;
 
   if (errors.length === 0 && (results.length > 0 || skipped.length > 0)) {
-    const displayName = results[0]?.canonicalName || results[0]?.name || ctx.source;
+    const displayName =
+      results[0]?.canonicalName || results[0]?.name || ctx.source;
     const skillCount = selectedSkills?.length ?? results.length;
 
-    const uniqueSkippedSkills = [...new Set(skipped.map(s => s.skillName))];
+    const uniqueSkippedSkills = [...new Set(skipped.map((s) => s.skillName))];
     if (skipped.length > 0 && results.length > 0) {
       spinner?.succeed(
-        `Installed ${chalk.green(results.length)} skill${results.length > 1 ? 's' : ''}, skipped ${chalk.dim(`${uniqueSkippedSkills.length} skill${uniqueSkippedSkills.length > 1 ? 's' : ''}`)} → ${chalk.dim(platformsLabel)}`
+        `Installed ${chalk.green(results.length)} skill${results.length > 1 ? "s" : ""}, skipped ${chalk.dim(`${uniqueSkippedSkills.length} skill${uniqueSkippedSkills.length > 1 ? "s" : ""}`)} → ${chalk.dim(platformsLabel)}`,
       );
     } else if (skipped.length > 0) {
       spinner?.succeed(
-        `Skipped ${chalk.dim(`${uniqueSkippedSkills.length} skill${uniqueSkippedSkills.length > 1 ? 's' : ''}`)} (already installed) → ${chalk.dim(platformsLabel)}`
+        `Skipped ${chalk.dim(`${uniqueSkippedSkills.length} skill${uniqueSkippedSkills.length > 1 ? "s" : ""}`)} (already installed) → ${chalk.dim(platformsLabel)}`,
       );
     } else {
       spinner?.succeed(
         isMultiSkill
-          ? `Installed ${chalk.green(skillCount)} skill${skillCount > 1 ? 's' : ''} → ${chalk.dim(platformsLabel)}`
+          ? `Installed ${chalk.green(skillCount)} skill${skillCount > 1 ? "s" : ""} → ${chalk.dim(platformsLabel)}`
           : isMultiTarget
             ? `Installed ${chalk.green(displayName)} → ${chalk.dim(platformsLabel)}`
-            : `Installed ${chalk.green(displayName)} → ${chalk.dim(results[0]?.installDir || platformsLabel)}`
+            : `Installed ${chalk.green(displayName)} → ${chalk.dim(results[0]?.installDir || platformsLabel)}`,
       );
     }
   } else if (errors.length > 0) {
@@ -702,7 +1090,7 @@ function reportResults(ctx: InstallContext): void {
     spinner?.fail(
       isMultiSkill
         ? `Install failed: ${chalk.red(errors.length)}/${attempted} errors`
-        : `Failed to install ${chalk.red(ctx.source)}`
+        : `Failed to install ${chalk.red(ctx.source)}`,
     );
     process.exitCode = 1;
   }
@@ -715,12 +1103,16 @@ function reportResults(ctx: InstallContext): void {
       groupedByPlatform.set(r.platform, list);
     }
 
-    const uniqueSkillNames = [...new Set(results.map(r => r.canonicalName || r.name))];
+    const uniqueSkillNames = [
+      ...new Set(results.map((r) => r.canonicalName || r.name)),
+    ];
     if (uniqueSkillNames.length <= 20) {
       console.log();
       for (const name of uniqueSkillNames.slice(0, 20)) {
-        const record = results.find(r => (r.canonicalName || r.name) === name);
-        const icon = record?.hasSkillMd ? chalk.green('✓') : chalk.yellow('⚠');
+        const record = results.find(
+          (r) => (r.canonicalName || r.name) === name,
+        );
+        const icon = record?.hasSkillMd ? chalk.green("✓") : chalk.yellow("⚠");
         console.log(`  ${icon} ${chalk.cyan(name)}`);
       }
     } else {
@@ -737,7 +1129,9 @@ function reportResults(ctx: InstallContext): void {
     for (const platform of targets) {
       const record = byPlatform.get(platform);
       if (!record) continue;
-      console.log(`  ${chalk.green('✓')} ${chalk.cyan(platform)} → ${chalk.dim(record.installDir)}`);
+      console.log(
+        `  ${chalk.green("✓")} ${chalk.cyan(platform)} → ${chalk.dim(record.installDir)}`,
+      );
     }
   } else if (!isMultiSkill && targets.length === 1 && results[0]) {
     const record = results[0];
@@ -745,14 +1139,20 @@ function reportResults(ctx: InstallContext): void {
       console.log(chalk.yellow(`  ⚠ No SKILL.md found`));
     }
     if (record.skill?.validation && !record.skill.validation.ok) {
-      console.log(chalk.yellow(`  ⚠ Validation failed (${record.skill.validation.issues.length} issues)`));
+      console.log(
+        chalk.yellow(
+          `  ⚠ Validation failed (${record.skill.validation.issues.length} issues)`,
+        ),
+      );
     }
   }
 
   if (errors.length > 0) {
     console.log(chalk.red(`\n  Errors:`));
     for (const e of errors.slice(0, 10)) {
-      const prefix = e.inputSource ? `${e.inputSource} → ${e.platform}` : e.platform;
+      const prefix = e.inputSource
+        ? `${e.inputSource} → ${e.platform}`
+        : e.platform;
       console.log(chalk.red(`    ✗ ${prefix}: ${e.error}`));
     }
     if (errors.length > 10) {
@@ -762,8 +1162,12 @@ function reportResults(ctx: InstallContext): void {
   }
 
   if (skipped.length > 0) {
-    const uniqueSkills = [...new Set(skipped.map(s => s.skillName))];
-    console.log(chalk.dim(`\n  ${uniqueSkills.length} skill${uniqueSkills.length > 1 ? 's' : ''} already installed (skipped):`));
+    const uniqueSkills = [...new Set(skipped.map((s) => s.skillName))];
+    console.log(
+      chalk.dim(
+        `\n  ${uniqueSkills.length} skill${uniqueSkills.length > 1 ? "s" : ""} already installed (skipped):`,
+      ),
+    );
 
     const bySkill = new Map<string, Platform[]>();
     for (const s of skipped) {
@@ -775,7 +1179,7 @@ function reportResults(ctx: InstallContext): void {
     const onlySkill = bySkill.size === 1 ? [...bySkill.entries()][0] : null;
     if (onlySkill && isMultiTarget) {
       const [skillName, platforms] = onlySkill;
-      console.log(chalk.dim(`    • ${skillName} → ${platforms.join(', ')}`));
+      console.log(chalk.dim(`    • ${skillName} → ${platforms.join(", ")}`));
     } else {
       for (const [skillName] of [...bySkill.entries()].slice(0, 5)) {
         console.log(chalk.dim(`    • ${skillName}`));
@@ -784,7 +1188,118 @@ function reportResults(ctx: InstallContext): void {
         console.log(chalk.dim(`    ... and ${bySkill.size - 5} more`));
       }
     }
-    console.log(chalk.dim(`\n  💡 Reinstall with: ${chalk.cyan(`skild install ${ctx.source} --force`)}`));
+    console.log(
+      chalk.dim(
+        `\n  💡 Reinstall with: ${chalk.cyan(`skild install ${ctx.source} --force`)}`,
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// Stage 6b: Report Prompt Results
+// ============================================================================
+
+function reportPromptResults(ctx: InstallContext): void {
+  const {
+    promptResults,
+    errors,
+    skipped,
+    spinner,
+    jsonOnly,
+    selectedPrompts,
+    targets,
+  } = ctx;
+
+  if (ctx.cleanupMaterialized) ctx.cleanupMaterialized();
+
+  const isMulti = (selectedPrompts?.length ?? 0) > 1;
+  const platformsLabel =
+    targets.length === PLATFORMS.length
+      ? "all platforms"
+      : targets.length === 1
+        ? targets[0]
+        : `${targets.length} platforms`;
+
+  if (jsonOnly) {
+    printJson({
+      ok: errors.length === 0,
+      artifactType: "prompt",
+      source: ctx.source,
+      scope: ctx.scope,
+      promptCount: selectedPrompts?.length ?? 0,
+      results: promptResults,
+      errors,
+      skipped,
+    });
+    process.exitCode = errors.length ? 1 : 0;
+    return;
+  }
+
+  if (errors.length === 0 && (promptResults.length > 0 || skipped.length > 0)) {
+    const installedCount = promptResults.length;
+    const skippedCount = skipped.length;
+
+    if (skippedCount > 0 && installedCount > 0) {
+      spinner?.succeed(
+        `Installed ${chalk.green(installedCount)} prompt${installedCount > 1 ? "s" : ""}, skipped ${chalk.dim(`${skippedCount}`)} → ${chalk.dim(platformsLabel)}`,
+      );
+    } else if (skippedCount > 0) {
+      spinner?.succeed(
+        `Skipped ${chalk.dim(`${skippedCount} prompt${skippedCount > 1 ? "s" : ""}`)} (already installed) → ${chalk.dim(platformsLabel)}`,
+      );
+    } else {
+      spinner?.succeed(
+        isMulti
+          ? `Installed ${chalk.green(installedCount)} prompt${installedCount > 1 ? "s" : ""} → ${chalk.dim(platformsLabel)}`
+          : `Installed prompt ${chalk.green(promptResults[0]?.name || ctx.source)} → ${chalk.dim(platformsLabel)}`,
+      );
+    }
+
+    if (isMulti && promptResults.length > 0) {
+      console.log();
+      const uniqueNames = [...new Set(promptResults.map((r) => r.name))];
+      for (const name of uniqueNames.slice(0, 20)) {
+        console.log(`  ${chalk.green("✓")} ${chalk.cyan(name)}`);
+      }
+      if (uniqueNames.length > 20) {
+        console.log(chalk.dim(`    ... and ${uniqueNames.length - 20} more`));
+      }
+    }
+  } else if (errors.length > 0) {
+    spinner?.fail(
+      isMulti
+        ? `Install failed: ${chalk.red(errors.length)} error${errors.length > 1 ? "s" : ""}`
+        : `Failed to install prompt ${chalk.red(ctx.source)}`,
+    );
+    process.exitCode = 1;
+  }
+
+  if (errors.length > 0) {
+    console.log(chalk.red(`\n  Errors:`));
+    for (const e of errors.slice(0, 10)) {
+      const prefix = e.inputSource
+        ? `${e.inputSource} → ${e.platform}`
+        : e.platform;
+      console.log(chalk.red(`    ✗ ${prefix}: ${e.error}`));
+    }
+    if (errors.length > 10) {
+      console.log(chalk.dim(`    ... and ${errors.length - 10} more errors`));
+    }
+    process.exitCode = 1;
+  }
+
+  if (skipped.length > 0) {
+    console.log(
+      chalk.dim(
+        `\n  ${skipped.length} prompt${skipped.length > 1 ? "s" : ""} already installed (skipped).`,
+      ),
+    );
+    console.log(
+      chalk.dim(
+        `  💡 Reinstall with: ${chalk.cyan(`skild install ${ctx.source} --type prompt --force`)}`,
+      ),
+    );
   }
 }
 
@@ -792,7 +1307,10 @@ function reportResults(ctx: InstallContext): void {
 // Main Entry Point
 // ============================================================================
 
-export async function install(source: string, options: InstallCommandOptions = {}): Promise<void> {
+export async function install(
+  source: string,
+  options: InstallCommandOptions = {},
+): Promise<void> {
   const ctx = createContext(source, options);
 
   // Immediate feedback
@@ -801,13 +1319,18 @@ export async function install(source: string, options: InstallCommandOptions = {
   }
 
   try {
-    if (!await resolveSource(ctx)) return;
-    if (!await discoverSkills(ctx)) return;
-    if (!await promptSelections(ctx)) return;
+    if (!(await resolveSource(ctx))) return;
+    if (!(await discoverSkills(ctx))) return;
+    if (!(await promptSelections(ctx))) return;
     await executeInstalls(ctx);
     reportResults(ctx);
   } catch (error: unknown) {
-    const message = error instanceof SkildError ? error.message : error instanceof Error ? error.message : String(error);
+    const message =
+      error instanceof SkildError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : String(error);
     if (ctx.jsonOnly) printJson({ ok: false, error: message });
     else {
       if (ctx.spinner) ctx.spinner.fail(chalk.red(message));
@@ -825,30 +1348,37 @@ export async function install(source: string, options: InstallCommandOptions = {
 // ============================================================================
 
 async function reportDownload(
-  record: { sourceType: string; canonicalName?: string; source: string; registryUrl?: string },
-  registryOverride?: string
+  record: {
+    sourceType: string;
+    canonicalName?: string;
+    source: string;
+    registryUrl?: string;
+  },
+  registryOverride?: string,
 ): Promise<void> {
   const enableStats =
-    process.env.SKILD_ENABLE_STATS === '1' ||
-    process.env.SKILD_ENABLE_DOWNLOAD_STATS === '1' ||
-    process.env.SKILD_ENABLE_TELEMETRY === '1';
+    process.env.SKILD_ENABLE_STATS === "1" ||
+    process.env.SKILD_ENABLE_DOWNLOAD_STATS === "1" ||
+    process.env.SKILD_ENABLE_TELEMETRY === "1";
   if (!enableStats) return;
 
   try {
-    if (record.sourceType === 'local') return;
-    const registryUrl = resolveRegistryUrl(record.registryUrl || registryOverride);
+    if (record.sourceType === "local") return;
+    const registryUrl = resolveRegistryUrl(
+      record.registryUrl || registryOverride,
+    );
     const endpoint = `${registryUrl}/stats/downloads`;
 
-    const payload: Record<string, unknown> = { source: 'cli' };
-    if (record.sourceType === 'registry') {
-      payload.entityType = 'registry';
+    const payload: Record<string, unknown> = { source: "cli" };
+    if (record.sourceType === "registry") {
+      payload.entityType = "registry";
       payload.entityId = record.canonicalName || record.source;
-    } else if (record.sourceType === 'github-url') {
-      payload.entityType = 'linked';
-      payload.sourceInput = { provider: 'github', url: record.source };
-    } else if (record.sourceType === 'degit-shorthand') {
-      payload.entityType = 'linked';
-      payload.sourceInput = { provider: 'github', spec: record.source };
+    } else if (record.sourceType === "github-url") {
+      payload.entityType = "linked";
+      payload.sourceInput = { provider: "github", url: record.source };
+    } else if (record.sourceType === "degit-shorthand") {
+      payload.entityType = "linked";
+      payload.sourceInput = { provider: "github", spec: record.source };
     } else {
       return;
     }
@@ -856,11 +1386,11 @@ async function reportDownload(
     await fetchWithTimeout(
       endpoint,
       {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload)
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
       },
-      3000
+      3000,
     );
   } catch {
     // best-effort only

@@ -1,5 +1,5 @@
-import path from 'path';
-import fs from 'fs';
+import path from "path";
+import fs from "fs";
 import type {
   InstallOptions,
   InstallRecord,
@@ -11,24 +11,62 @@ import type {
   UpdateOptions,
   SkillFrontmatter,
   SkillValidationResult,
-  SourceType
-} from './types.js';
-import { classifySource, extractSkillName, resolveLocalPath, toDegitPath } from './source.js';
-import { createTempDir, hashDirectoryContent, isDirEmpty, isDirectory, removeDir, replaceDirAtomic } from './fs.js';
-import { ensureDir, getSkillInstallDir, getSkillsDir } from './paths.js';
-import { SkildError } from './errors.js';
-import { readInstallRecord, writeInstallRecord, upsertLockEntry, loadOrCreateGlobalConfig, removeLockEntry, loadRegistryAuth } from './storage.js';
-import { parseSkillFrontmatter, readSkillMd, validateSkillDir } from './skill.js';
-import { PLATFORMS } from './types.js';
+  SourceType,
+  PromptInstallRecord,
+  PromptFrontmatter,
+} from "./types.js";
+import {
+  classifySource,
+  extractSkillName,
+  resolveLocalPath,
+  toDegitPath,
+} from "./source.js";
+import {
+  createTempDir,
+  hashDirectoryContent,
+  isDirEmpty,
+  isDirectory,
+  removeDir,
+  replaceDirAtomic,
+  sha256File,
+} from "./fs.js";
+import {
+  ensureDir,
+  getSkillInstallDir,
+  getSkillsDir,
+  getPromptsDir,
+  getPromptInstallPath,
+  getPromptMetadataDir,
+  getPromptInstallRecordPath,
+} from "./paths.js";
+import { SkildError } from "./errors.js";
+import {
+  readInstallRecord,
+  writeInstallRecord,
+  upsertLockEntry,
+  loadOrCreateGlobalConfig,
+  removeLockEntry,
+  loadRegistryAuth,
+  writePromptRecord,
+  readPromptRecord,
+  removePromptRecord,
+} from "./storage.js";
+import {
+  parseSkillFrontmatter,
+  readSkillMd,
+  validateSkillDir,
+  parseFrontmatter,
+} from "./skill.js";
+import { PLATFORMS } from "./types.js";
 import {
   downloadAndExtractTarball,
   parseRegistrySpecifier,
   resolveRegistryUrl,
   resolveRegistryVersion,
   canonicalNameToInstallDirName,
-  type RegistryResolvedVersion
-} from './registry.js';
-import { materializeSourceToDir } from './materialize.js';
+  type RegistryResolvedVersion,
+} from "./registry.js";
+import { materializeSourceToDir } from "./materialize.js";
 
 export interface InstallInput {
   source: string;
@@ -42,7 +80,7 @@ export interface InstallInput {
 }
 
 type InlineDependency = {
-  sourceType: 'inline';
+  sourceType: "inline";
   source: string;
   name: string;
   inlinePath: string;
@@ -69,17 +107,26 @@ type InstallContext = {
 function normalizeDependencies(raw: unknown): string[] {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) {
-    throw new SkildError('INVALID_DEPENDENCIES', 'Frontmatter "dependencies" must be an array of strings.');
+    throw new SkildError(
+      "INVALID_DEPENDENCIES",
+      'Frontmatter "dependencies" must be an array of strings.',
+    );
   }
   const out: string[] = [];
   const seen = new Set<string>();
   for (const item of raw) {
-    if (typeof item !== 'string') {
-      throw new SkildError('INVALID_DEPENDENCIES', 'Frontmatter "dependencies" must be an array of strings.');
+    if (typeof item !== "string") {
+      throw new SkildError(
+        "INVALID_DEPENDENCIES",
+        'Frontmatter "dependencies" must be an array of strings.',
+      );
     }
     const trimmed = item.trim();
     if (!trimmed) {
-      throw new SkildError('INVALID_DEPENDENCIES', 'Dependencies cannot contain empty values.');
+      throw new SkildError(
+        "INVALID_DEPENDENCIES",
+        "Dependencies cannot contain empty values.",
+      );
     }
     if (seen.has(trimmed)) continue;
     seen.add(trimmed);
@@ -89,64 +136,95 @@ function normalizeDependencies(raw: unknown): string[] {
 }
 
 function isRelativeDependency(dep: string): boolean {
-  return dep.startsWith('./') || dep.startsWith('../');
+  return dep.startsWith("./") || dep.startsWith("../");
 }
 
-function resolveInlineDependency(raw: string, baseDir: string, rootDir: string): InlineDependency {
+function resolveInlineDependency(
+  raw: string,
+  baseDir: string,
+  rootDir: string,
+): InlineDependency {
   const resolved = path.resolve(baseDir, raw);
   const relToRoot = path.relative(rootDir, resolved);
-  if (relToRoot.startsWith('..') || path.isAbsolute(relToRoot)) {
-    throw new SkildError('INVALID_DEPENDENCY', `Inline dependency path escapes the skill root: ${raw}`);
+  if (relToRoot.startsWith("..") || path.isAbsolute(relToRoot)) {
+    throw new SkildError(
+      "INVALID_DEPENDENCY",
+      `Inline dependency path escapes the skill root: ${raw}`,
+    );
   }
   if (!isDirectory(resolved)) {
-    throw new SkildError('INVALID_DEPENDENCY', `Inline dependency is not a directory: ${raw}`);
+    throw new SkildError(
+      "INVALID_DEPENDENCY",
+      `Inline dependency is not a directory: ${raw}`,
+    );
   }
   const validation = validateSkillDir(resolved);
   if (!validation.ok) {
-    throw new SkildError('INVALID_DEPENDENCY', `Inline dependency is not a valid skill: ${raw}`, { issues: validation.issues });
+    throw new SkildError(
+      "INVALID_DEPENDENCY",
+      `Inline dependency is not a valid skill: ${raw}`,
+      { issues: validation.issues },
+    );
   }
-  const normalizedInlinePath = relToRoot.split(path.sep).join('/');
+  const normalizedInlinePath = relToRoot.split(path.sep).join("/");
   return {
-    sourceType: 'inline',
+    sourceType: "inline",
     source: raw,
     name: path.basename(resolved) || raw,
     inlinePath: normalizedInlinePath,
-    inlineDir: resolved
+    inlineDir: resolved,
   };
 }
 
 function normalizeDependencyInput(raw: string): string {
-  if (!raw.toLowerCase().startsWith('github:')) return raw;
-  const trimmed = raw.slice('github:'.length).trim().replace(/^\/+/, '');
+  if (!raw.toLowerCase().startsWith("github:")) return raw;
+  const trimmed = raw.slice("github:".length).trim().replace(/^\/+/, "");
   if (!trimmed) {
-    throw new SkildError('INVALID_DEPENDENCY', 'Invalid GitHub dependency: missing repo after "github:".');
+    throw new SkildError(
+      "INVALID_DEPENDENCY",
+      'Invalid GitHub dependency: missing repo after "github:".',
+    );
   }
   return trimmed;
 }
 
-function parseDependency(raw: string, baseDir: string, rootDir: string): ParsedDependency {
+function parseDependency(
+  raw: string,
+  baseDir: string,
+  rootDir: string,
+): ParsedDependency {
   const cleaned = normalizeDependencyInput(raw).trim();
   if (!cleaned) {
-    throw new SkildError('INVALID_DEPENDENCY', 'Dependencies cannot contain empty values.');
+    throw new SkildError(
+      "INVALID_DEPENDENCY",
+      "Dependencies cannot contain empty values.",
+    );
   }
 
   if (isRelativeDependency(cleaned)) {
     return resolveInlineDependency(cleaned, baseDir, rootDir);
   }
 
-  if (cleaned.startsWith('@')) {
-    return { sourceType: 'registry', source: cleaned, spec: parseRegistrySpecifier(cleaned) };
+  if (cleaned.startsWith("@")) {
+    return {
+      sourceType: "registry",
+      source: cleaned,
+      spec: parseRegistrySpecifier(cleaned),
+    };
   }
 
-  if (/^https?:\/\//i.test(cleaned) || cleaned.includes('github.com')) {
-    return { sourceType: 'github-url', source: cleaned };
+  if (/^https?:\/\//i.test(cleaned) || cleaned.includes("github.com")) {
+    return { sourceType: "github-url", source: cleaned };
   }
 
   if (/^[^/]+\/[^/]+/.test(cleaned)) {
-    return { sourceType: 'degit-shorthand', source: cleaned };
+    return { sourceType: "degit-shorthand", source: cleaned };
   }
 
-  throw new SkildError('INVALID_DEPENDENCY', `Unsupported dependency source "${raw}".`);
+  throw new SkildError(
+    "INVALID_DEPENDENCY",
+    `Unsupported dependency source "${raw}".`,
+  );
 }
 
 function getFrontmatterFromDir(dir: string): SkillFrontmatter | null {
@@ -156,10 +234,10 @@ function getFrontmatterFromDir(dir: string): SkillFrontmatter | null {
 }
 
 function getDependencyKeyFromRecord(record: InstallRecord): string {
-  if (record.sourceType === 'registry') {
+  if (record.sourceType === "registry") {
     return `registry:${record.canonicalName || record.source}`;
   }
-  if (record.sourceType === 'local') {
+  if (record.sourceType === "local") {
     const resolved = resolveLocalPath(record.source);
     return `local:${resolved || record.source}`;
   }
@@ -175,17 +253,19 @@ function addDependedBy(record: InstallRecord, dependerName: string): void {
 
 function removeDependedBy(record: InstallRecord, dependerName: string): void {
   if (!record.dependedBy) return;
-  const next = record.dependedBy.filter(name => name !== dependerName);
+  const next = record.dependedBy.filter((name) => name !== dependerName);
   record.dependedBy = next.length ? next : undefined;
   writeInstallRecord(record.installDir, record);
 }
 
-function dedupeInstalledDependencies(entries: InstalledDependency[]): InstalledDependency[] {
+function dedupeInstalledDependencies(
+  entries: InstalledDependency[],
+): InstalledDependency[] {
   const seen = new Set<string>();
   const out: InstalledDependency[] = [];
   for (const entry of entries) {
     const key =
-      entry.sourceType === 'inline'
+      entry.sourceType === "inline"
         ? `inline:${entry.inlinePath || entry.name}`
         : `external:${entry.installDir || entry.source}`;
     if (seen.has(key)) continue;
@@ -198,22 +278,27 @@ function dedupeInstalledDependencies(entries: InstalledDependency[]): InstalledD
 function assertNonEmptyInstall(stagingDir: string, source: string): void {
   if (isDirEmpty(stagingDir)) {
     throw new SkildError(
-      'EMPTY_INSTALL_DIR',
+      "EMPTY_INSTALL_DIR",
       `Installed directory is empty for source: ${source}\nSource likely does not point to a valid subdirectory.\nTry: https://github.com/<owner>/<repo>/tree/<branch>/skills/<skill-name>\nExample: https://github.com/anthropics/skills/tree/main/skills/pdf`,
-      { source }
+      { source },
     );
   }
 }
 
-function resolvePlatformAndScope(options: InstallOptions | ListOptions | UpdateOptions): { platform: Platform; scope: InstallScope } {
+function resolvePlatformAndScope(
+  options: InstallOptions | ListOptions | UpdateOptions,
+): { platform: Platform; scope: InstallScope } {
   const config = loadOrCreateGlobalConfig();
   return {
     platform: (options.platform || config.defaultPlatform) as Platform,
-    scope: (options.scope || config.defaultScope) as InstallScope
+    scope: (options.scope || config.defaultScope) as InstallScope,
   };
 }
 
-async function installSkillBase(input: InstallInput, options: InstallOptions = {}): Promise<InstallRecord> {
+async function installSkillBase(
+  input: InstallInput,
+  options: InstallOptions = {},
+): Promise<InstallRecord> {
   const { platform, scope } = resolvePlatformAndScope(options);
   const source = input.source;
   const sourceType = classifySource(source);
@@ -225,17 +310,25 @@ async function installSkillBase(input: InstallInput, options: InstallOptions = {
   const installDir = getSkillInstallDir(platform, scope, skillName);
 
   if (fs.existsSync(installDir) && !options.force) {
-    throw new SkildError('ALREADY_INSTALLED', `Skill "${skillName}" is already installed at ${installDir}. Use --force, or uninstall first.`, {
-      skillName,
-      installDir
-    });
+    throw new SkildError(
+      "ALREADY_INSTALLED",
+      `Skill "${skillName}" is already installed at ${installDir}. Use --force, or uninstall first.`,
+      {
+        skillName,
+        installDir,
+      },
+    );
   }
 
   const tempRoot = createTempDir(skillsDir, skillName);
-  const stagingDir = path.join(tempRoot, 'staging');
+  const stagingDir = path.join(tempRoot, "staging");
 
   try {
-    await materializeSourceToDir({ source, targetDir: stagingDir, materializedDir: input.materializedDir });
+    await materializeSourceToDir({
+      source,
+      targetDir: stagingDir,
+      materializedDir: input.materializedDir,
+    });
 
     assertNonEmptyInstall(stagingDir, source);
     replaceDirAtomic(stagingDir, installDir);
@@ -253,11 +346,11 @@ async function installSkillBase(input: InstallInput, options: InstallOptions = {
       installedAt: new Date().toISOString(),
       installDir,
       contentHash,
-      hasSkillMd: fs.existsSync(path.join(installDir, 'SKILL.md')),
+      hasSkillMd: fs.existsSync(path.join(installDir, "SKILL.md")),
       skill: {
         frontmatter: validation.frontmatter,
-        validation
-      }
+        validation,
+      },
     };
 
     writeInstallRecord(installDir, record);
@@ -271,7 +364,7 @@ async function installSkillBase(input: InstallInput, options: InstallOptions = {
       installedAt: record.installedAt,
       updatedAt: record.updatedAt,
       installDir: record.installDir,
-      contentHash: record.contentHash
+      contentHash: record.contentHash,
     };
     upsertLockEntry(scope, lockEntry);
 
@@ -284,7 +377,7 @@ async function installSkillBase(input: InstallInput, options: InstallOptions = {
 async function installRegistrySkillBase(
   input: { spec: string; registryUrl?: string; nameOverride?: string },
   options: InstallOptions = {},
-  resolved?: RegistryResolvedVersion
+  resolved?: RegistryResolvedVersion,
 ): Promise<InstallRecord> {
   const { platform, scope } = resolvePlatformAndScope(options);
   const registryUrl = resolveRegistryUrl(input.registryUrl);
@@ -294,21 +387,27 @@ async function installRegistrySkillBase(
   const skillsDir = getSkillsDir(platform, scope);
   ensureDir(skillsDir);
 
-  const installName = input.nameOverride || canonicalNameToInstallDirName(canonicalName);
+  const installName =
+    input.nameOverride || canonicalNameToInstallDirName(canonicalName);
   const installDir = getSkillInstallDir(platform, scope, installName);
 
   if (fs.existsSync(installDir) && !options.force) {
-    throw new SkildError('ALREADY_INSTALLED', `Skill "${canonicalName}" is already installed at ${installDir}. Use --force, or uninstall first.`, {
-      skillName: canonicalName,
-      installDir
-    });
+    throw new SkildError(
+      "ALREADY_INSTALLED",
+      `Skill "${canonicalName}" is already installed at ${installDir}. Use --force, or uninstall first.`,
+      {
+        skillName: canonicalName,
+        installDir,
+      },
+    );
   }
 
   const tempRoot = createTempDir(skillsDir, installName);
-  const stagingDir = path.join(tempRoot, 'staging');
+  const stagingDir = path.join(tempRoot, "staging");
 
   try {
-    const resolvedVersion = resolved || (await resolveRegistryVersion(registryUrl, spec));
+    const resolvedVersion =
+      resolved || (await resolveRegistryVersion(registryUrl, spec));
     await downloadAndExtractTarball(resolvedVersion, tempRoot, stagingDir);
     assertNonEmptyInstall(stagingDir, input.spec);
 
@@ -325,13 +424,13 @@ async function installRegistrySkillBase(
       platform,
       scope,
       source: input.spec,
-      sourceType: 'registry',
+      sourceType: "registry",
       resolvedVersion: resolvedVersion.version,
       installedAt: new Date().toISOString(),
       installDir,
       contentHash,
-      hasSkillMd: fs.existsSync(path.join(installDir, 'SKILL.md')),
-      skill: { validation, frontmatter: validation.frontmatter }
+      hasSkillMd: fs.existsSync(path.join(installDir, "SKILL.md")),
+      skill: { validation, frontmatter: validation.frontmatter },
     };
 
     writeInstallRecord(installDir, record);
@@ -340,11 +439,11 @@ async function installRegistrySkillBase(
       platform,
       scope,
       source: input.spec,
-      sourceType: 'registry',
+      sourceType: "registry",
       registryUrl,
       installedAt: record.installedAt,
       installDir: record.installDir,
-      contentHash: record.contentHash
+      contentHash: record.contentHash,
     };
     upsertLockEntry(scope, lockEntry);
 
@@ -354,7 +453,10 @@ async function installRegistrySkillBase(
   }
 }
 
-function createInstallContext(options: InstallOptions, registryUrl?: string): InstallContext {
+function createInstallContext(
+  options: InstallOptions,
+  registryUrl?: string,
+): InstallContext {
   const { platform, scope } = resolvePlatformAndScope(options);
   return {
     platform,
@@ -362,7 +464,7 @@ function createInstallContext(options: InstallOptions, registryUrl?: string): In
     force: Boolean(options.force),
     registryUrl: registryUrl ?? options.registryUrl,
     active: new Set<string>(),
-    inlineActive: new Set<string>()
+    inlineActive: new Set<string>(),
   };
 }
 
@@ -374,21 +476,21 @@ function formatVersionConflict(input: {
   requestedBy: string;
 }): string {
   const lines = [
-    'Version conflict detected',
-    `  Installed: ${input.name}@${input.installedVersion || 'unknown'} (required by ${input.installedBy})`,
+    "Version conflict detected",
+    `  Installed: ${input.name}@${input.installedVersion || "unknown"} (required by ${input.installedBy})`,
     `  Requested: ${input.name}@${input.requested} (required by ${input.requestedBy})`,
-    '',
-    'Please resolve manually.'
+    "",
+    "Please resolve manually.",
   ];
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 async function ensureExternalDependencyInstalled(
   dep: ExternalDependency,
   ctx: InstallContext,
-  dependerName: string
+  dependerName: string,
 ): Promise<InstallRecord> {
-  if (dep.sourceType === 'registry') {
+  if (dep.sourceType === "registry") {
     const registryUrl = resolveRegistryUrl(ctx.registryUrl);
     const spec = dep.spec || parseRegistrySpecifier(dep.source);
     const resolved = await resolveRegistryVersion(registryUrl, spec);
@@ -399,24 +501,27 @@ async function ensureExternalDependencyInstalled(
       const existing = readInstallRecord(installDir);
       if (!existing) {
         throw new SkildError(
-          'MISSING_METADATA',
+          "MISSING_METADATA",
           `Skill "${spec.canonicalName}" is missing install metadata (.skild/install.json). Use --force to reinstall.`,
-          { installDir }
+          { installDir },
         );
       }
-      const installedVersion = existing.resolvedVersion || existing.skill?.frontmatter?.version;
+      const installedVersion =
+        existing.resolvedVersion || existing.skill?.frontmatter?.version;
       if (installedVersion && installedVersion !== resolved.version) {
-        const installedBy = existing.dependedBy?.length ? existing.dependedBy.join(', ') : 'unknown';
+        const installedBy = existing.dependedBy?.length
+          ? existing.dependedBy.join(", ")
+          : "unknown";
         throw new SkildError(
-          'VERSION_CONFLICT',
+          "VERSION_CONFLICT",
           formatVersionConflict({
             name: spec.canonicalName,
             installedVersion,
             requested: spec.versionOrTag,
             installedBy,
-            requestedBy: dependerName
+            requestedBy: dependerName,
           }),
-          { installDir }
+          { installDir },
         );
       }
       addDependedBy(existing, dependerName);
@@ -427,15 +532,18 @@ async function ensureExternalDependencyInstalled(
     const record = await installRegistrySkillBase(
       { spec: dep.source, registryUrl },
       { platform: ctx.platform, scope: ctx.scope, force: ctx.force },
-      resolved
+      resolved,
     );
     addDependedBy(record, dependerName);
     await processDependenciesForSkill(record, ctx);
     return record;
   }
 
-  if (dep.sourceType === 'local') {
-    throw new SkildError('INVALID_DEPENDENCY', `Dependencies cannot reference local absolute paths: ${dep.source}`);
+  if (dep.sourceType === "local") {
+    throw new SkildError(
+      "INVALID_DEPENDENCY",
+      `Dependencies cannot reference local absolute paths: ${dep.source}`,
+    );
   }
 
   const installName = extractSkillName(dep.source);
@@ -444,16 +552,16 @@ async function ensureExternalDependencyInstalled(
     const existing = readInstallRecord(installDir);
     if (!existing) {
       throw new SkildError(
-        'MISSING_METADATA',
+        "MISSING_METADATA",
         `Skill "${installName}" is missing install metadata (.skild/install.json). Use --force to reinstall.`,
-        { installDir }
+        { installDir },
       );
     }
     if (existing.source !== dep.source) {
       throw new SkildError(
-        'DEPENDENCY_CONFLICT',
+        "DEPENDENCY_CONFLICT",
         `Dependency conflict detected for "${installName}". Installed from ${existing.source}, requested ${dep.source}.`,
-        { installDir }
+        { installDir },
       );
     }
     addDependedBy(existing, dependerName);
@@ -463,7 +571,7 @@ async function ensureExternalDependencyInstalled(
 
   const record = await installSkillBase(
     { source: dep.source },
-    { platform: ctx.platform, scope: ctx.scope, force: ctx.force }
+    { platform: ctx.platform, scope: ctx.scope, force: ctx.force },
   );
   addDependedBy(record, dependerName);
   await processDependenciesForSkill(record, ctx);
@@ -474,11 +582,14 @@ async function processInlineDependencies(
   inlineDir: string,
   rootDir: string,
   ctx: InstallContext,
-  dependerName: string
+  dependerName: string,
 ): Promise<InstalledDependency[]> {
   const key = `inline:${inlineDir}`;
   if (ctx.inlineActive.has(key)) {
-    throw new SkildError('DEPENDENCY_CYCLE', `Inline dependency cycle detected at ${inlineDir}`);
+    throw new SkildError(
+      "DEPENDENCY_CYCLE",
+      `Inline dependency cycle detected at ${inlineDir}`,
+    );
   }
   ctx.inlineActive.add(key);
 
@@ -491,23 +602,32 @@ async function processInlineDependencies(
 
     for (const depRaw of dependencies) {
       const parsed = parseDependency(depRaw, inlineDir, rootDir);
-      if (parsed.sourceType === 'inline') {
+      if (parsed.sourceType === "inline") {
         installedDeps.push({
           name: parsed.name,
           source: depRaw,
-          sourceType: 'inline',
-          inlinePath: parsed.inlinePath
+          sourceType: "inline",
+          inlinePath: parsed.inlinePath,
         });
-        const nested = await processInlineDependencies(parsed.inlineDir, rootDir, ctx, dependerName);
+        const nested = await processInlineDependencies(
+          parsed.inlineDir,
+          rootDir,
+          ctx,
+          dependerName,
+        );
         installedDeps.push(...nested);
       } else {
-        const depRecord = await ensureExternalDependencyInstalled(parsed, ctx, dependerName);
+        const depRecord = await ensureExternalDependencyInstalled(
+          parsed,
+          ctx,
+          dependerName,
+        );
         installedDeps.push({
           name: depRecord.name,
           source: depRaw,
           sourceType: depRecord.sourceType,
           canonicalName: depRecord.canonicalName,
-          installDir: depRecord.installDir
+          installDir: depRecord.installDir,
         });
       }
     }
@@ -518,15 +638,22 @@ async function processInlineDependencies(
   }
 }
 
-async function processDependenciesForSkill(record: InstallRecord, ctx: InstallContext): Promise<void> {
+async function processDependenciesForSkill(
+  record: InstallRecord,
+  ctx: InstallContext,
+): Promise<void> {
   const key = getDependencyKeyFromRecord(record);
   if (ctx.active.has(key)) {
-    throw new SkildError('DEPENDENCY_CYCLE', `Dependency cycle detected for ${record.name}`);
+    throw new SkildError(
+      "DEPENDENCY_CYCLE",
+      `Dependency cycle detected for ${record.name}`,
+    );
   }
   ctx.active.add(key);
 
   try {
-    const frontmatter = record.skill?.frontmatter || getFrontmatterFromDir(record.installDir);
+    const frontmatter =
+      record.skill?.frontmatter || getFrontmatterFromDir(record.installDir);
     if (!frontmatter) return;
 
     const dependencies = normalizeDependencies(frontmatter.dependencies);
@@ -534,38 +661,56 @@ async function processDependenciesForSkill(record: InstallRecord, ctx: InstallCo
     const installedDeps: InstalledDependency[] = [];
 
     for (const depRaw of dependencies) {
-      const parsed = parseDependency(depRaw, record.installDir, record.installDir);
-      if (parsed.sourceType === 'inline') {
+      const parsed = parseDependency(
+        depRaw,
+        record.installDir,
+        record.installDir,
+      );
+      if (parsed.sourceType === "inline") {
         installedDeps.push({
           name: parsed.name,
           source: depRaw,
-          sourceType: 'inline',
-          inlinePath: parsed.inlinePath
+          sourceType: "inline",
+          inlinePath: parsed.inlinePath,
         });
-        const nested = await processInlineDependencies(parsed.inlineDir, record.installDir, ctx, record.name);
+        const nested = await processInlineDependencies(
+          parsed.inlineDir,
+          record.installDir,
+          ctx,
+          record.name,
+        );
         installedDeps.push(...nested);
       } else {
-        const depRecord = await ensureExternalDependencyInstalled(parsed, ctx, record.name);
+        const depRecord = await ensureExternalDependencyInstalled(
+          parsed,
+          ctx,
+          record.name,
+        );
         installedDeps.push({
           name: depRecord.name,
           source: depRaw,
           sourceType: depRecord.sourceType,
           canonicalName: depRecord.canonicalName,
-          installDir: depRecord.installDir
+          installDir: depRecord.installDir,
         });
       }
     }
 
     record.skillset = skillset ? true : undefined;
     record.dependencies = dependencies.length ? dependencies : undefined;
-    record.installedDependencies = installedDeps.length ? dedupeInstalledDependencies(installedDeps) : undefined;
+    record.installedDependencies = installedDeps.length
+      ? dedupeInstalledDependencies(installedDeps)
+      : undefined;
     writeInstallRecord(record.installDir, record);
   } finally {
     ctx.active.delete(key);
   }
 }
 
-export async function installSkill(input: InstallInput, options: InstallOptions = {}): Promise<InstallRecord> {
+export async function installSkill(
+  input: InstallInput,
+  options: InstallOptions = {},
+): Promise<InstallRecord> {
   const ctx = createInstallContext(options);
   const record = await installSkillBase(input, options);
   await processDependenciesForSkill(record, ctx);
@@ -574,7 +719,7 @@ export async function installSkill(input: InstallInput, options: InstallOptions 
 
 export async function installRegistrySkill(
   input: { spec: string; registryUrl?: string; nameOverride?: string },
-  options: InstallOptions = {}
+  options: InstallOptions = {},
 ): Promise<InstallRecord> {
   const ctx = createInstallContext(options, input.registryUrl);
   const record = await installRegistrySkillBase(input, options);
@@ -601,52 +746,80 @@ export function listSkills(options: ListOptions = {}): ListedSkill[] {
 
   const entries = fs
     .readdirSync(skillsDir, { withFileTypes: true })
-    .filter(e => e.isDirectory() && !e.name.startsWith('.'));
+    .filter((e) => e.isDirectory() && !e.name.startsWith("."));
   return entries
-    .map(e => {
+    .map((e) => {
       const dir = path.join(skillsDir, e.name);
-      const hasSkillMd = fs.existsSync(path.join(dir, 'SKILL.md'));
+      const hasSkillMd = fs.existsSync(path.join(dir, "SKILL.md"));
       const record = readInstallRecord(dir);
       return { name: e.name, installDir: dir, hasSkillMd, record };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function listAllSkills(options: { scope?: InstallScope } = {}): ListedSkillWithContext[] {
-  const scope = (options.scope || loadOrCreateGlobalConfig().defaultScope) as InstallScope;
+export function listAllSkills(
+  options: { scope?: InstallScope } = {},
+): ListedSkillWithContext[] {
+  const scope = (options.scope ||
+    loadOrCreateGlobalConfig().defaultScope) as InstallScope;
 
-  return PLATFORMS.flatMap(platform =>
-    listSkills({ platform, scope }).map(s => ({
+  return PLATFORMS.flatMap((platform) =>
+    listSkills({ platform, scope }).map((s) => ({
       ...s,
       platform,
-      scope
-    }))
+      scope,
+    })),
   );
 }
 
-export function getSkillInfo(name: string, options: ListOptions = {}): InstallRecord {
+export function getSkillInfo(
+  name: string,
+  options: ListOptions = {},
+): InstallRecord {
   const { platform, scope } = resolvePlatformAndScope(options);
   const installDir = getSkillInstallDir(platform, scope, name);
   if (!fs.existsSync(installDir)) {
-    throw new SkildError('SKILL_NOT_FOUND', `Skill "${name}" not found in ${getSkillsDir(platform, scope)}`, { name, platform, scope });
+    throw new SkildError(
+      "SKILL_NOT_FOUND",
+      `Skill "${name}" not found in ${getSkillsDir(platform, scope)}`,
+      { name, platform, scope },
+    );
   }
 
   const record = readInstallRecord(installDir);
   if (!record) {
-    throw new SkildError('MISSING_METADATA', `Skill "${name}" is missing install metadata (.skild/install.json).`, { name, installDir });
+    throw new SkildError(
+      "MISSING_METADATA",
+      `Skill "${name}" is missing install metadata (.skild/install.json).`,
+      { name, installDir },
+    );
   }
   return record;
 }
 
-export function validateSkill(nameOrPath: string, options: { platform?: Platform; scope?: InstallScope } = {}): SkillValidationResult {
+export function validateSkill(
+  nameOrPath: string,
+  options: { platform?: Platform; scope?: InstallScope } = {},
+): SkillValidationResult {
   const localPath = resolveLocalPath(nameOrPath);
-  const dir = localPath || getSkillInstallDir((options.platform || loadOrCreateGlobalConfig().defaultPlatform) as Platform, (options.scope || loadOrCreateGlobalConfig().defaultScope) as InstallScope, nameOrPath);
+  const dir =
+    localPath ||
+    getSkillInstallDir(
+      (options.platform ||
+        loadOrCreateGlobalConfig().defaultPlatform) as Platform,
+      (options.scope ||
+        loadOrCreateGlobalConfig().defaultScope) as InstallScope,
+      nameOrPath,
+    );
   return validateSkillDir(dir);
 }
 
 export function uninstallSkill(
   name: string,
-  options: InstallOptions & { allowMissingMetadata?: boolean; withDeps?: boolean } = {}
+  options: InstallOptions & {
+    allowMissingMetadata?: boolean;
+    withDeps?: boolean;
+  } = {},
 ): void {
   const visited = new Set<string>();
   uninstallSkillInternal(name, options, visited);
@@ -654,8 +827,11 @@ export function uninstallSkill(
 
 function uninstallSkillInternal(
   name: string,
-  options: InstallOptions & { allowMissingMetadata?: boolean; withDeps?: boolean },
-  visited: Set<string>
+  options: InstallOptions & {
+    allowMissingMetadata?: boolean;
+    withDeps?: boolean;
+  },
+  visited: Set<string>,
 ): void {
   const { platform, scope } = resolvePlatformAndScope(options);
   const key = `${platform}:${scope}:${name}`;
@@ -664,24 +840,35 @@ function uninstallSkillInternal(
 
   const installDir = getSkillInstallDir(platform, scope, name);
   if (!fs.existsSync(installDir)) {
-    throw new SkildError('SKILL_NOT_FOUND', `Skill "${name}" not found in ${getSkillsDir(platform, scope)}`, { name, platform, scope });
+    throw new SkildError(
+      "SKILL_NOT_FOUND",
+      `Skill "${name}" not found in ${getSkillsDir(platform, scope)}`,
+      { name, platform, scope },
+    );
   }
 
   const record = readInstallRecord(installDir);
   if (!record && !options.allowMissingMetadata) {
-    throw new SkildError('MISSING_METADATA', `Skill "${name}" is missing install metadata. Use --force to uninstall anyway.`, { name, installDir });
+    throw new SkildError(
+      "MISSING_METADATA",
+      `Skill "${name}" is missing install metadata. Use --force to uninstall anyway.`,
+      { name, installDir },
+    );
   }
 
   const dependerName = record?.name || name;
   if (record?.installedDependencies?.length) {
     for (const dep of record.installedDependencies) {
-      if (dep.sourceType === 'inline') continue;
+      if (dep.sourceType === "inline") continue;
       const depInstallDir =
         dep.installDir || getSkillInstallDir(platform, scope, dep.name);
       const depRecord = readInstallRecord(depInstallDir);
       if (!depRecord) continue;
       removeDependedBy(depRecord, dependerName);
-      if (options.withDeps && (!depRecord.dependedBy || depRecord.dependedBy.length === 0)) {
+      if (
+        options.withDeps &&
+        (!depRecord.dependedBy || depRecord.dependedBy.length === 0)
+      ) {
         uninstallSkillInternal(depRecord.name, options, visited);
       }
     }
@@ -691,12 +878,15 @@ function uninstallSkillInternal(
   removeLockEntry(scope, name);
 }
 
-export async function updateSkill(name?: string, options: UpdateOptions = {}): Promise<InstallRecord[]> {
+export async function updateSkill(
+  name?: string,
+  options: UpdateOptions = {},
+): Promise<InstallRecord[]> {
   const { platform, scope } = resolvePlatformAndScope(options);
 
   const targets = name
     ? [{ name }]
-    : listSkills({ platform, scope }).map(s => ({ name: s.name }));
+    : listSkills({ platform, scope }).map((s) => ({ name: s.name }));
 
   const results: InstallRecord[] = [];
   for (const target of targets) {
@@ -704,12 +894,20 @@ export async function updateSkill(name?: string, options: UpdateOptions = {}): P
     const now = new Date().toISOString();
 
     const updated =
-      record.sourceType === 'registry'
+      record.sourceType === "registry"
         ? await installRegistrySkill(
-            { spec: record.source, nameOverride: record.name, registryUrl: record.registryUrl || loadRegistryAuth()?.registryUrl },
-            { platform, scope, force: true }
+            {
+              spec: record.source,
+              nameOverride: record.name,
+              registryUrl:
+                record.registryUrl || loadRegistryAuth()?.registryUrl,
+            },
+            { platform, scope, force: true },
           )
-        : await installSkill({ source: record.source, nameOverride: record.name }, { platform, scope, force: true });
+        : await installSkill(
+            { source: record.source, nameOverride: record.name },
+            { platform, scope, force: true },
+          );
 
     updated.installedAt = record.installedAt;
     updated.dependedBy = record.dependedBy;
@@ -718,4 +916,132 @@ export async function updateSkill(name?: string, options: UpdateOptions = {}): P
     results.push(updated);
   }
   return results;
+}
+
+// ============================================================================
+// Prompt Lifecycle
+// ============================================================================
+
+export interface PromptInstallInput {
+  absPath: string;
+  fileName: string;
+  source: string;
+  sourceType?: SourceType;
+  frontmatter?: PromptFrontmatter;
+}
+
+export interface ListedPrompt {
+  name: string;
+  fileName: string;
+  filePath: string;
+  record?: PromptInstallRecord | null;
+}
+
+export function installPrompt(
+  input: PromptInstallInput,
+  options: InstallOptions = {},
+): PromptInstallRecord {
+  const { platform, scope } = resolvePlatformAndScope(options);
+  const promptsDir = getPromptsDir(platform, scope);
+  ensureDir(promptsDir);
+
+  const destPath = getPromptInstallPath(platform, scope, input.fileName);
+
+  if (fs.existsSync(destPath) && !options.force) {
+    throw new SkildError(
+      "ALREADY_INSTALLED",
+      `Prompt "${input.fileName}" is already installed at ${destPath}. Use --force, or uninstall first.`,
+      { skillName: input.fileName, installDir: destPath },
+    );
+  }
+
+  fs.copyFileSync(input.absPath, destPath);
+
+  const contentHash = sha256File(destPath);
+  const sourceType = input.sourceType || classifySource(input.source);
+
+  const record: PromptInstallRecord = {
+    schemaVersion: 1,
+    name:
+      input.frontmatter?.name || path.basename(input.fileName, ".prompt.md"),
+    fileName: input.fileName,
+    platform,
+    scope,
+    source: input.source,
+    sourceType,
+    installedAt: new Date().toISOString(),
+    contentHash,
+    frontmatter: input.frontmatter,
+  };
+
+  writePromptRecord(platform, scope, record);
+  return record;
+}
+
+export function listPrompts(options: ListOptions = {}): ListedPrompt[] {
+  const { platform, scope } = resolvePlatformAndScope(options);
+  const promptsDir = getPromptsDir(platform, scope);
+  if (!fs.existsSync(promptsDir)) return [];
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(promptsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  return entries
+    .filter((e) => e.isFile() && e.name.endsWith(".prompt.md"))
+    .map((e) => {
+      const filePath = path.join(promptsDir, e.name);
+      const baseName = path.basename(e.name, ".prompt.md");
+      const record = readPromptRecord(platform, scope, baseName);
+      return {
+        name: record?.name || baseName,
+        fileName: e.name,
+        filePath,
+        record,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function listAllPrompts(
+  options: { scope?: InstallScope } = {},
+): Array<ListedPrompt & { platform: Platform; scope: InstallScope }> {
+  const scope = (options.scope ||
+    loadOrCreateGlobalConfig().defaultScope) as InstallScope;
+
+  return PLATFORMS.flatMap((platform) =>
+    listPrompts({ platform, scope }).map((p) => ({
+      ...p,
+      platform,
+      scope,
+    })),
+  );
+}
+
+export function uninstallPrompt(
+  name: string,
+  options: InstallOptions = {},
+): void {
+  const { platform, scope } = resolvePlatformAndScope(options);
+  const promptsDir = getPromptsDir(platform, scope);
+
+  // Try exact filename first, then derive filename
+  const fileName = name.endsWith(".prompt.md") ? name : `${name}.prompt.md`;
+  const filePath = path.join(promptsDir, fileName);
+
+  if (!fs.existsSync(filePath)) {
+    throw new SkildError(
+      "SKILL_NOT_FOUND",
+      `Prompt "${name}" not found in ${promptsDir}`,
+      { name, platform, scope },
+    );
+  }
+
+  fs.rmSync(filePath);
+
+  const baseName = path.basename(fileName, ".prompt.md");
+  removePromptRecord(platform, scope, baseName);
 }

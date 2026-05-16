@@ -1,13 +1,20 @@
-import chalk from 'chalk';
+import chalk from "chalk";
 import {
   canonicalNameToInstallDirName,
   uninstallSkill,
+  uninstallPrompt,
   SkildError,
+  type ArtifactType,
   type InstallScope,
   type Platform,
-} from '@skild/core';
-import { createSpinner } from '../utils/logger.js';
-import { formatTargetLabel, formatTargetSummary, hasInstalledSkill, resolveTargetSelection } from '../utils/target-selection.js';
+} from "@skild/core";
+import { createSpinner } from "../utils/logger.js";
+import {
+  formatTargetLabel,
+  formatTargetSummary,
+  hasInstalledSkill,
+  resolveTargetSelection,
+} from "../utils/target-selection.js";
 
 export interface UninstallCommandOptions {
   target?: Platform | string;
@@ -15,18 +22,40 @@ export interface UninstallCommandOptions {
   global?: boolean;
   force?: boolean;
   withDeps?: boolean;
+  type?: string;
 }
 
-export async function uninstall(skill: string, options: UninstallCommandOptions = {}): Promise<void> {
+export async function uninstall(
+  skill: string,
+  options: UninstallCommandOptions = {},
+): Promise<void> {
+  const artifactType: ArtifactType =
+    options.type === "prompt" ? "prompt" : "skill";
+
+  if (artifactType === "prompt") {
+    return uninstallPromptCommand(skill, options);
+  }
+
   const canonical = skill.trim();
-  const resolvedName = canonical.startsWith('@') && canonical.includes('/') ? canonicalNameToInstallDirName(canonical) : canonical;
+  const resolvedName =
+    canonical.startsWith("@") && canonical.includes("/")
+      ? canonicalNameToInstallDirName(canonical)
+      : canonical;
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-  const selection = await resolveTargetSelection(options, interactive, resolvedName);
+  const selection = await resolveTargetSelection(
+    options,
+    interactive,
+    resolvedName,
+  );
   if (!selection) return;
 
   const { platforms, scopes } = selection;
   const spinner = createSpinner(`Uninstalling ${chalk.cyan(canonical)}...`);
-  const errors: Array<{ platform: Platform; scope: InstallScope; error: string }> = [];
+  const errors: Array<{
+    platform: Platform;
+    scope: InstallScope;
+    error: string;
+  }> = [];
   const skipped: Array<{ platform: Platform; scope: InstallScope }> = [];
 
   try {
@@ -42,10 +71,15 @@ export async function uninstall(skill: string, options: UninstallCommandOptions 
             platform,
             scope,
             allowMissingMetadata: Boolean(options.force),
-            withDeps: Boolean(options.withDeps)
+            withDeps: Boolean(options.withDeps),
           } as any);
         } catch (error: unknown) {
-          const message = error instanceof SkildError ? error.message : error instanceof Error ? error.message : String(error);
+          const message =
+            error instanceof SkildError
+              ? error.message
+              : error instanceof Error
+                ? error.message
+                : String(error);
           errors.push({ platform, scope, error: message });
         }
       }
@@ -53,17 +87,29 @@ export async function uninstall(skill: string, options: UninstallCommandOptions 
 
     const targetSummary = formatTargetSummary(platforms, scopes);
     if (errors.length === 0) {
-      spinner.succeed(`Uninstalled ${chalk.green(canonical)} → ${chalk.dim(targetSummary)}.`);
+      spinner.succeed(
+        `Uninstalled ${chalk.green(canonical)} → ${chalk.dim(targetSummary)}.`,
+      );
       if (skipped.length > 0) {
-        console.log(chalk.dim(`\n  Skipped ${skipped.length} target(s) with no installed skill.`));
+        console.log(
+          chalk.dim(
+            `\n  Skipped ${skipped.length} target(s) with no installed skill.`,
+          ),
+        );
       }
       return;
     }
 
-    spinner.fail(`Uninstalled ${chalk.green(canonical)} with ${chalk.red(errors.length.toString())} error(s) → ${chalk.dim(targetSummary)}.`);
-    console.log(chalk.red('\n  Errors:'));
+    spinner.fail(
+      `Uninstalled ${chalk.green(canonical)} with ${chalk.red(errors.length.toString())} error(s) → ${chalk.dim(targetSummary)}.`,
+    );
+    console.log(chalk.red("\n  Errors:"));
     for (const entry of errors.slice(0, 10)) {
-      console.log(chalk.red(`    ✗ ${formatTargetLabel(entry.platform, entry.scope)}: ${entry.error}`));
+      console.log(
+        chalk.red(
+          `    ✗ ${formatTargetLabel(entry.platform, entry.scope)}: ${entry.error}`,
+        ),
+      );
     }
     if (errors.length > 10) {
       console.log(chalk.dim(`    ... and ${errors.length - 10} more errors`));
@@ -71,7 +117,86 @@ export async function uninstall(skill: string, options: UninstallCommandOptions 
     process.exitCode = 1;
   } catch (error: unknown) {
     spinner.fail(`Failed to uninstall ${chalk.red(canonical)}`);
-    const message = error instanceof SkildError ? error.message : error instanceof Error ? error.message : String(error);
+    const message =
+      error instanceof SkildError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    console.error(chalk.red(message));
+    process.exitCode = 1;
+  }
+}
+
+// ============================================================================
+// Prompt Uninstall
+// ============================================================================
+
+async function uninstallPromptCommand(
+  name: string,
+  options: UninstallCommandOptions,
+): Promise<void> {
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const selection = await resolveTargetSelection(options, interactive);
+  if (!selection) return;
+
+  const { platforms, scopes } = selection;
+  const spinner = createSpinner(`Uninstalling prompt ${chalk.cyan(name)}...`);
+  const errors: Array<{
+    platform: Platform;
+    scope: InstallScope;
+    error: string;
+  }> = [];
+
+  try {
+    for (const scope of scopes) {
+      for (const platform of platforms) {
+        spinner.text = `Uninstalling prompt ${chalk.cyan(name)} from ${chalk.dim(platform)} (${scope})...`;
+        try {
+          uninstallPrompt(name, { platform, scope });
+        } catch (error: unknown) {
+          if (error instanceof SkildError && error.code === "SKILL_NOT_FOUND") {
+            continue; // Skip platforms where the prompt isn't installed
+          }
+          const message =
+            error instanceof SkildError
+              ? error.message
+              : error instanceof Error
+                ? error.message
+                : String(error);
+          errors.push({ platform, scope, error: message });
+        }
+      }
+    }
+
+    const targetSummary = formatTargetSummary(platforms, scopes);
+    if (errors.length === 0) {
+      spinner.succeed(
+        `Uninstalled prompt ${chalk.green(name)} → ${chalk.dim(targetSummary)}.`,
+      );
+      return;
+    }
+
+    spinner.fail(
+      `Uninstalled prompt ${chalk.green(name)} with ${chalk.red(errors.length.toString())} error(s) → ${chalk.dim(targetSummary)}.`,
+    );
+    console.log(chalk.red("\n  Errors:"));
+    for (const entry of errors.slice(0, 10)) {
+      console.log(
+        chalk.red(
+          `    ✗ ${formatTargetLabel(entry.platform, entry.scope)}: ${entry.error}`,
+        ),
+      );
+    }
+    process.exitCode = 1;
+  } catch (error: unknown) {
+    spinner.fail(`Failed to uninstall prompt ${chalk.red(name)}`);
+    const message =
+      error instanceof SkildError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : String(error);
     console.error(chalk.red(message));
     process.exitCode = 1;
   }
