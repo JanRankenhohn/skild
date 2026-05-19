@@ -4,6 +4,7 @@ import {
   uninstallSkill,
   uninstallPrompt,
   SkildError,
+  PLATFORMS,
   type ArtifactType,
   type InstallScope,
   type Platform,
@@ -136,11 +137,25 @@ async function uninstallPromptCommand(
   name: string,
   options: UninstallCommandOptions,
 ): Promise<void> {
-  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-  const selection = await resolveTargetSelection(options, interactive);
-  if (!selection) return;
+  // Resolve platforms/scopes directly (don't use resolveTargetSelection which checks for installed skills)
+  let platforms: Platform[];
+  if (options.target) {
+    platforms = [options.target as Platform];
+  } else {
+    platforms = [...PLATFORMS];
+  }
 
-  const { platforms, scopes } = selection;
+  const scopes: InstallScope[] = [];
+  if (options.local && options.global) {
+    scopes.push("global", "project");
+  } else if (options.local) {
+    scopes.push("project");
+  } else if (options.global) {
+    scopes.push("global");
+  } else {
+    scopes.push("global", "project");
+  }
+
   const spinner = createSpinner(`Uninstalling prompt ${chalk.cyan(name)}...`);
   const errors: Array<{
     platform: Platform;
