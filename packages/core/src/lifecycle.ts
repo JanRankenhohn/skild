@@ -922,6 +922,9 @@ export async function updateSkill(
 // Prompt Lifecycle
 // ============================================================================
 
+/** Platforms that have no file-based prompt/command system */
+const PROMPT_UNSUPPORTED_PLATFORMS: ReadonlySet<Platform> = new Set(["cursor"]);
+
 export interface PromptInstallInput {
   absPath: string;
   fileName: string;
@@ -942,6 +945,15 @@ export function installPrompt(
   options: InstallOptions = {},
 ): PromptInstallRecord {
   const { platform, scope } = resolvePlatformAndScope(options);
+
+  if (PROMPT_UNSUPPORTED_PLATFORMS.has(platform)) {
+    throw new SkildError(
+      "UNSUPPORTED_PLATFORM",
+      `Platform "${platform}" does not support file-based prompts. Skipping.`,
+      { platform },
+    );
+  }
+
   const promptsDir = getPromptsDir(platform, scope);
   ensureDir(promptsDir);
 
@@ -1012,12 +1024,13 @@ export function listAllPrompts(
   const scope = (options.scope ||
     loadOrCreateGlobalConfig().defaultScope) as InstallScope;
 
-  return PLATFORMS.flatMap((platform) =>
-    listPrompts({ platform, scope }).map((p) => ({
-      ...p,
-      platform,
-      scope,
-    })),
+  return PLATFORMS.filter((p) => !PROMPT_UNSUPPORTED_PLATFORMS.has(p)).flatMap(
+    (platform) =>
+      listPrompts({ platform, scope }).map((p) => ({
+        ...p,
+        platform,
+        scope,
+      })),
   );
 }
 

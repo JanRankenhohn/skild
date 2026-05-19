@@ -13,4 +13,5 @@ export type DiscoveredPromptInstall = {
   suggestedSource: string;
   displayName?: string;
   description?: string;
+  metadata?: import("@skild/core").PromptFrontmatter;
 };

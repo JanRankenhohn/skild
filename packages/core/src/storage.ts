@@ -223,7 +223,9 @@ export function writePromptRecord(
 ): void {
   const metaDir = getPromptMetadataDir(platform, scope);
   ensureDir(metaDir);
-  const filePath = getPromptInstallRecordPath(platform, scope, record.name);
+  // Always key by filename basename to stay consistent with list/uninstall lookups
+  const baseName = path.basename(record.fileName, ".prompt.md");
+  const filePath = getPromptInstallRecordPath(platform, scope, baseName);
   writeJsonFile(filePath, record);
 }
 

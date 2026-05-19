@@ -142,7 +142,8 @@ async function uninstallPromptCommand(
   if (options.target) {
     platforms = [options.target as Platform];
   } else {
-    platforms = [...PLATFORMS];
+    // Exclude platforms that don't support file-based prompts (e.g. Cursor)
+    platforms = PLATFORMS.filter((p) => p !== "cursor");
   }
 
   const scopes: InstallScope[] = [];

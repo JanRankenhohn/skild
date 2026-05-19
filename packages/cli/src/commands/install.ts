@@ -606,6 +606,7 @@ async function discoverPrompts(ctx: InstallContext): Promise<boolean> {
       suggestedSource: resolvedSource,
       displayName: d.metadata?.name || d.fileName,
       description: d.metadata?.description,
+      metadata: d.metadata,
     }));
     ctx.selectedPrompts = ctx.discoveredPrompts;
     ctx.isSingleSkill = discovered.length === 1;
@@ -970,7 +971,7 @@ async function executePromptInstalls(ctx: InstallContext): Promise<void> {
             absPath: prompt.absPath,
             fileName: prompt.fileName,
             source: prompt.suggestedSource,
-            frontmatter: undefined,
+            frontmatter: prompt.metadata,
           },
           { platform, scope, force: forceOverwrite },
         );
@@ -985,6 +986,13 @@ async function executePromptInstalls(ctx: InstallContext): Promise<void> {
             platform,
             installDir: details?.installDir || "",
           });
+          continue;
+        }
+        if (
+          error instanceof SkildError &&
+          error.code === "UNSUPPORTED_PLATFORM"
+        ) {
+          // Silently skip unsupported platforms (e.g. Cursor has no file-based prompts)
           continue;
         }
         const message =
