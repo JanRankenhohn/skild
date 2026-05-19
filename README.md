@@ -31,25 +31,25 @@ That's it. Your agent is ready to install and manage skills.
 
 ## 🧭 Command Overview
 
-| Command                                | Description                                          |
-| -------------------------------------- | ---------------------------------------------------- |
-| `skild install <source>`               | Install a Skill or Prompt (Git URL / local / registry)|
-| `skild install <source> --type prompt` | Install `.prompt.md` files into IDE prompt dirs      |
-| `skild list`                           | List installed Skills or Prompts                     |
-| `skild info <skill>`                   | Show Skill details                                   |
-| `skild update [skill]`                 | Update installed Skills                              |
-| `skild sync [skills...]`               | Auto-detect missing installs and sync                |
-| `skild uninstall <skill>`              | Remove a Skill or Prompt                             |
-| `skild init <name>`                    | Create a new Skill project                   |
-| `skild validate [path\|skill]`         | Validate a Skill folder or installed Skill   |
-| `skild push <repo>`                    | Push a Skill to a Git repository             |
-| `skild extract-github-skills <source>` | Extract GitHub Skills into a local catalog   |
-| `skild search <query>`                 | Search the registry                          |
-| `skild signup`                         | Create a publisher account                   |
-| `skild login`                          | Login to registry                            |
-| `skild whoami`                         | Show current identity                        |
-| `skild logout`                         | Remove credentials                           |
-| `skild publish`                        | Publish a Skill to the registry              |
+| Command                                | Description                                            |
+| -------------------------------------- | ------------------------------------------------------ |
+| `skild install <source>`               | Install a Skill or Prompt (Git URL / local / registry) |
+| `skild install <source> --type prompt` | Install `.prompt.md` files into IDE prompt dirs        |
+| `skild list`                           | List installed Skills or Prompts                       |
+| `skild info <skill>`                   | Show Skill details                                     |
+| `skild update [skill]`                 | Update installed Skills                                |
+| `skild sync [skills...]`               | Auto-detect missing installs and sync                  |
+| `skild uninstall <skill>`              | Remove a Skill or Prompt                               |
+| `skild init <name>`                    | Create a new Skill project                             |
+| `skild validate [path\|skill]`         | Validate a Skill folder or installed Skill             |
+| `skild push <repo>`                    | Push a Skill to a Git repository                       |
+| `skild extract-github-skills <source>` | Extract GitHub Skills into a local catalog             |
+| `skild search <query>`                 | Search the registry                                    |
+| `skild signup`                         | Create a publisher account                             |
+| `skild login`                          | Login to registry                                      |
+| `skild whoami`                         | Show current identity                                  |
+| `skild logout`                         | Remove credentials                                     |
+| `skild publish`                        | Publish a Skill to the registry                        |
 
 Run `skild <command> --help` for full options.
 
@@ -123,7 +123,7 @@ skild install anthropics/skills/skills/pdf -t cursor --local
 skild install anthropics/skills/skills/pdf -t windsurf --local
 ```
 
-## � Prompt & Command Support
+## 📝 Prompt & Command Support
 
 Install `.prompt.md` and command files for any supported IDE — same sources, same workflow:
 
@@ -147,18 +147,18 @@ skild uninstall my-prompt --type prompt
 
 Prompts are installed as individual files (not directories) into each IDE's native prompt/command location:
 
-| IDE             | User-level path                        |
-| --------------- | -------------------------------------- |
-| **Copilot**     | `%APPDATA%/Code/User/prompts/`         |
-| **Claude Code** | `~/.claude/commands/`                  |
-| **Codex**       | `~/.codex/prompts/`                    |
-| **Windsurf**    | `~/.windsurf/prompts/`                 |
-| **OpenCode**    | `~/.config/opencode/prompts/`          |
-| **Antigravity** | `~/.gemini/antigravity/prompts/`       |
+| IDE             | User-level path                  |
+| --------------- | -------------------------------- |
+| **Copilot**     | `%APPDATA%/Code/User/prompts/`   |
+| **Claude Code** | `~/.claude/commands/`            |
+| **Codex**       | `~/.codex/prompts/`              |
+| **Windsurf**    | `~/.windsurf/prompts/`           |
+| **OpenCode**    | `~/.config/opencode/prompts/`    |
+| **Antigravity** | `~/.gemini/antigravity/prompts/` |
 
 Use `--local` to install to project-level prompt directories instead.
 
-## �🔧 Manage Skills
+## 🔧 Manage Skills
 
 ```bash
 skild list                 # List installed Skills
