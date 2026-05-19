@@ -1,8 +1,9 @@
-export { SkildError } from './errors.js';
-export { PLATFORMS } from './types.js';
+export { SkildError } from "./errors.js";
+export { PLATFORMS, ARTIFACT_TYPES } from "./types.js";
 export type {
   Platform,
   InstallScope,
+  ArtifactType,
   InstallOptions,
   ListOptions,
   UpdateOptions,
@@ -14,23 +15,41 @@ export type {
   DependencySourceType,
   Lockfile,
   GlobalConfig,
-  RegistryAuth
-} from './types.js';
+  RegistryAuth,
+  PromptFrontmatter,
+  PromptInstallRecord,
+} from "./types.js";
 
 export {
   loadOrCreateGlobalConfig,
   saveGlobalConfig,
   loadRegistryAuth,
   saveRegistryAuth,
-  clearRegistryAuth
-} from './storage.js';
-export { getSkillsDir, getSkillInstallDir } from './paths.js';
-export { validateSkillDir, readSkillMd, parseSkillFrontmatter } from './skill.js';
-export { initSkill } from './init.js';
-export { fetchWithTimeout } from './http.js';
-export { assertValidAlias, isValidAlias, normalizeAlias } from './alias.js';
-export { materializeSourceToDir, materializeSourceToTemp } from './materialize.js';
-export { deriveChildSource, stripSourceRef, toDegitPath } from './source.js';
+  clearRegistryAuth,
+} from "./storage.js";
+export {
+  getSkillsDir,
+  getSkillInstallDir,
+  getPromptsDir,
+  getPromptInstallPath,
+  getPromptMetadataDir,
+  getPromptInstallRecordPath,
+  getArtifactDir,
+} from "./paths.js";
+export {
+  validateSkillDir,
+  readSkillMd,
+  parseSkillFrontmatter,
+  parseFrontmatter,
+} from "./skill.js";
+export { initSkill } from "./init.js";
+export { fetchWithTimeout } from "./http.js";
+export { assertValidAlias, isValidAlias, normalizeAlias } from "./alias.js";
+export {
+  materializeSourceToDir,
+  materializeSourceToTemp,
+} from "./materialize.js";
+export { deriveChildSource, stripSourceRef, toDegitPath } from "./source.js";
 export {
   DEFAULT_REGISTRY_URL,
   canonicalNameToInstallDirName,
@@ -40,8 +59,8 @@ export {
   resolveRegistryVersion,
   downloadAndExtractTarball,
   resolveRegistryAlias,
-  searchRegistrySkills
-} from './registry.js';
+  searchRegistrySkills,
+} from "./registry.js";
 export {
   installSkill,
   installRegistrySkill,
@@ -50,5 +69,9 @@ export {
   getSkillInfo,
   uninstallSkill,
   updateSkill,
-  validateSkill
-} from './lifecycle.js';
+  validateSkill,
+  installPrompt,
+  listPrompts,
+  listAllPrompts,
+  uninstallPrompt,
+} from "./lifecycle.js";

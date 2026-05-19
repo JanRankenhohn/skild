@@ -11,7 +11,11 @@ export function readSkillMd(skillDir: string): string | null {
 }
 
 export function parseSkillFrontmatter(skillMdContent: string): SkillFrontmatter | null {
-  const trimmed = skillMdContent.trimStart();
+  return parseFrontmatter(skillMdContent) as SkillFrontmatter | null;
+}
+
+export function parseFrontmatter(content: string): Record<string, unknown> | null {
+  const trimmed = content.trimStart();
   if (!trimmed.startsWith('---')) return null;
 
   const end = trimmed.indexOf('\n---', 3);
@@ -21,7 +25,7 @@ export function parseSkillFrontmatter(skillMdContent: string): SkillFrontmatter 
   const parsed = yaml.load(yamlBlock);
   if (!parsed || typeof parsed !== 'object') return null;
 
-  return parsed as SkillFrontmatter;
+  return parsed as Record<string, unknown>;
 }
 
 export function validateSkillDir(skillDir: string): SkillValidationResult {

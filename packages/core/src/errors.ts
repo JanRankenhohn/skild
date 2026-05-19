@@ -15,7 +15,8 @@ export type SkildErrorCode =
   | 'REGISTRY_RESOLVE_FAILED'
   | 'REGISTRY_DOWNLOAD_FAILED'
   | 'INTEGRITY_MISMATCH'
-  | 'NETWORK_TIMEOUT';
+  | 'NETWORK_TIMEOUT'
+  | 'UNSUPPORTED_PLATFORM';
 
 export class SkildError extends Error {
   readonly code: SkildErrorCode;
