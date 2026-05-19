@@ -11,8 +11,6 @@ _The npm for Agent Skills — Discover, install, manage, and publish AI Agent Sk
 
 [Website](https://skild.sh) · [Documentation](./docs/README.md) · [Skild Hub](https://hub.skild.sh)
 
-English
-
 </div>
 
 ---
@@ -169,16 +167,6 @@ Ready to share? See **[Publishing Skills](./docs/publishing-skills.md)** for the
 - **[Submit from GitHub](./docs/submit-from-github.md)** — Index GitHub Skills
 - **[Skild Hub Guide](./docs/hub.md)** — Web interface walkthrough
 - **[FAQ](./docs/faq.md)** — Common questions
-
-## ⭐ Star History
-
-<a href="https://star-history.com/#peiiii/skild&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=peiiii/skild&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=peiiii/skild&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=peiiii/skild&type=Date" />
- </picture>
-</a>
 
 ## 🤝 Contributing
 
